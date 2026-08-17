@@ -5,7 +5,7 @@ description = "CLI to scaffold data migration/ELT projects with YAML schemas and
 readme = "README.md"
 requires-python = ">=3.14"
 license = "MIT"
-authors = [{ name = "joao.goncalves" }]
+authors = [{ name = "João Pedro Zanetti Gonçalves" }]
 keywords = ["etl", "elt", "dagster", "database", "migration", "schemas", "cli"]
 classifiers = [
     "Development Status :: 3 - Alpha",

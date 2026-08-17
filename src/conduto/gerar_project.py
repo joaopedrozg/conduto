@@ -2,7 +2,6 @@ from pathlib import Path
 import subprocess
 
 from rich.console import Console
-from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 
 console = Console()
 
@@ -25,37 +24,32 @@ def setup_uv_environment(base_path: Path):
                 console.print(init_result.stderr, style="bold red")
             raise subprocess.CalledProcessError(init_result.returncode, init_result.args)
     else:
-        console.print("pyproject.toml ja existe, pulando 'uv init'.")
+        console.print("Projeto uv detectado, pulando 'uv init'.")
 
-    # 2. Instalar dependencias essenciais para parse e manipulacao
+    # 2. Adicionar apenas as dependencias que ainda nao estao declaradas
     dependencies = ["pyyaml", "jinja2", "polars", "dagster"]
-    cmd = ["uv", "add"] + dependencies
+    ja_declaradas = []
+    if pyproject.exists():
+        conteudo = pyproject.read_text(encoding="utf-8")
+        for dep in dependencies:
+            if dep in conteudo:
+                ja_declaradas.append(dep)
+    pendentes = [dep for dep in dependencies if dep not in ja_declaradas]
 
-    def _run():
-        return subprocess.run(
-            cmd,
-            cwd=base_path,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+    if not pendentes:
+        console.print("Dependencias ja declaradas no projeto, nada a fazer.")
+        return
 
-    if console.is_terminal:
-        with Progress(
-            SpinnerColumn(),
-            BarColumn(bar_width=40),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-        ) as progress:
-            progress.add_task(
-                f"Instalando dependencias: {', '.join(dependencies)}", total=None
-            )
-            result = _run()
-    else:
-        console.print(f"Instalando dependencias: {', '.join(dependencies)}")
-        result = _run()
-
+    console.print(f"Adicionando dependencias: {', '.join(pendentes)}")
+    cmd = ["uv", "add", *pendentes]
+    result = subprocess.run(
+        cmd,
+        cwd=base_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
     if result.returncode != 0:
         if result.stdout:
             console.print(result.stdout)

@@ -20,18 +20,28 @@ custom_style = questionary.Style([
 ])
 
 @app.command()
-def init(project_name: str):
+def init(project_name: str = typer.Argument(None, help="Nome do projeto (opcional se já estiver em um projeto uv)")):
+    # Detecta se já estamos dentro de um projeto uv (existe pyproject.toml)
+    cwd = Path.cwd()
+    em_projeto_uv = (cwd / "pyproject.toml").exists()
+
     # Cria o texto principal
     texto_titulo = Text("Bem vindo ao Conduto!", style="bold cyan")
 
-    # Cria a mensagem de instrução
-    texto_instrucao = Text("\nVamos criar um novo projeto chamado: ", style="dim white")
-
-    # Cria o nome do projeto destacado (como uma "arte" simples em texto)
-    nome_projeto = Text(f" {project_name} ", style="bold white on blue")
-
-    # Combina o texto
-    mensagem_completa = texto_titulo + texto_instrucao + nome_projeto
+    if em_projeto_uv:
+        project_dir = cwd
+        nome_projeto = project_name or cwd.name
+        texto_instrucao = Text("\nProjeto uv detectado! Adaptando a estrutura ao projeto atual.", style="dim white")
+        mensagem_completa = texto_titulo + texto_instrucao
+    else:
+        if project_name is None:
+            console.print(Text("Informe um nome de projeto: conduto init meu_projeto", style="bold red"))
+            raise typer.Exit(code=1)
+        project_dir = cwd / project_name
+        nome_projeto = project_name
+        texto_instrucao = Text("\nVamos criar um novo projeto chamado: ", style="dim white")
+        nome_projeto_arte = Text(f" {nome_projeto} ", style="bold white on blue")
+        mensagem_completa = texto_titulo + texto_instrucao + nome_projeto_arte
 
     # Exibe dentro de um painel com bordas
     console.print(Panel(mensagem_completa, border_style="green", expand=False, width=100))
@@ -79,7 +89,7 @@ def init(project_name: str):
     senha_db_destino = Prompt.ask("PASSWORD:", default="postgres", password=True)
 
     context = {
-        "project_name": project_name,
+        "project_name": nome_projeto,
         "db_destino_tipo": db_destino,
         "origem": {
             "host": host_db_origem,
@@ -97,8 +107,8 @@ def init(project_name: str):
         }
     }
 
-    project_dir = Path.cwd() / project_name
-    project_dir.mkdir(exist_ok=True)
+    if not em_projeto_uv:
+        project_dir.mkdir(exist_ok=True)
 
     env_path = env_render(context, output_dir=project_dir)
     schemas_render(project_dir, context)
