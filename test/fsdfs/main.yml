@@ -1,8 +1,0 @@
-version: "1.0"
-project: fsdfs
-
-# Lista de tabelas na ordem correta de dependência (ex: clientes antes de pedidos)
-tables:
-  - path: "schemas/clientes.yml"
-  - path: "schemas/pedidos.yml"
-  - path: "schemas/produtos.yml"
