@@ -1,6 +1,6 @@
 [project]
 name = "conduto"
-version = "0.2.0"
+version = "0.3.0"
 description = "CLI to scaffold data migration/ELT projects with YAML schemas and a uv-managed environment."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -19,6 +19,9 @@ classifiers = [
 ]
 dependencies = [
     "jinja2>=3.1.6",
+    "psycopg[binary]>=3.2",
+    "pyodbc>=5.1",
+    "pymysql>=1.1",
     "questionary>=2.1.1",
     "rich>=15.0.0",
     "typer>=0.27.1",
@@ -44,3 +47,10 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 conduto = ["templates/**/*.jinja"]
+
+[tool.uv.workspace]
+members = [
+    "teste/njfdbf",
+    "teste/dfsds",
+    "test/fsdfs",
+]

@@ -15,6 +15,11 @@ CLI para criar projetos de migração/ELT de dados: gera o `.env` com as credenc
 - Schemas YAML de exemplo (clientes, pedidos e produtos) com PK, FK, `unique` e `default`
 - Ambiente Python gerenciado por `uv` com `pyyaml`, `jinja2`, `polars` e `dagster`
 - Adapta-se automaticamente a um projeto uv existente (gera direto no projeto atual, sem subpasta nem `uv init`)
+- Adapters de conexão com defaults por SGBD (porta, banco e usuário)
+- Teste de conexão antes de gerar o projeto (com opção de digitar novamente ou seguir mesmo assim)
+- Credenciais visíveis no prompt durante o preenchimento — só vão para o `.env`
+- Instalação da lib oficial do SGBD escolhido (`psycopg[binary]`, `pymysql`, `pyodbc`)
+- Download/instalação automática do ODBC Driver for SQL Server (Windows, Linux e macOS)
 - Feedback visual com `rich` e `questionary`
 
 ## Instalação
@@ -39,12 +44,35 @@ conduto init meu_projeto
 
 O comando pergunta interativamente:
 
-1. SGBD de origem (PostgreSQL, MySQL ou SQL Server)
-2. Credenciais de origem (host, porta, banco, usuário e senha)
-3. SGBD de destino
-4. Credenciais de destino
+1. SGBD de origem (PostgreSQL, MySQL ou SQL Server) — os defaults de porta, banco e usuário mudam conforme o SGBD
+2. Credenciais de origem, digitadas de forma visível (só vão para o `.env`)
+3. Teste de conexão de origem — se falhar, escolha entre digitar novamente ou continuar mesmo assim
+4. SGBD de destino
+5. Credenciais de destino, com o mesmo fluxo de teste
 
-**Dentro de um projeto uv?** Se o diretório atual já tem `pyproject.toml` (por exemplo, após `uv add conduto`), o conduto se adapta: gera `.env`, `main.yml` e `schemas/` direto no projeto atual e adiciona só as dependências que faltam — sem criar subpasta nem rodar `uv init`. Nesse caso, use `uv run conduto init` (o nome do projeto vira opcional).
+**Dentro de um projeto uv?** Se o diretório atual já tem `pyproject.toml` (por exemplo, após `uv add conduto`), o conduto se adapta: gera `.env`, `main.yml` e `schemas/` direto no projeto atual e adiciona só as dependências que faltam — sem criar subpasta nem rodar `uv init`. **Dentro de um projeto uv?** Se o diretório atual já tem `pyproject.toml` (por exemplo, após `uv add conduto`), o conduto se adapta: gera `.env`, `main.yml` e `schemas/` direto no projeto atual e adiciona só as dependências que faltam — sem criar subpasta nem rodar `uv init`. Nesse caso, use `uv run conduto init` (o nome do projeto vira opcional).
+
+### Driver ODBC do SQL Server
+
+O `pyodbc` precisa do driver nativo instalado no sistema. Se a conexão com SQL Server falhar por falta de driver, o `conduto init` oferece a opção **Instalar driver automaticamente**. As credenciais já digitadas ficam guardadas só em memória e, depois da instalação, o teste de conexão é reexecutado sozinho — você não precisa digitá-las novamente. Também dá para instalar direto, sem passar pelo fluxo interativo:
+
+```bash
+conduto install-sqlserver-driver
+```
+
+Esse comando funciona em Windows (winget ou MSI), Linux (apt) e macOS (Homebrew). No Windows, existe ainda um script standalone que baixa o instalador oficial — útil para instalação offline ou para automatizar fora do conduto:
+
+Durante a instalação no Windows, se o terminal não estiver como administrador, o conduto abre a janela de permissão (UAC) na frente para você confirmar. Se houver um reinício pendente no sistema, a instalação é bloqueada com um aviso claro até você reiniciar o Windows. O download e a instalação rodam em segundo plano (sem abrir janela do PowerShell) — só a confirmação do UAC aparece.
+
+```powershell
+# só baixa o MSI
+.\scripts\install-sqlserver-odbc.ps1 -DownloadOnly -OutFile .\msodbcsql18.msi
+
+# baixa e instala (winget ou MSI; se precisar de administrador, o UAC abre na frente)
+.\scripts\install-sqlserver-odbc.ps1
+```
+
+Versões suportadas: 18 (padrão) e 17 (`-Version 17`). Documentação oficial: [Download ODBC Driver for SQL Server](https://learn.microsoft.com/sql/connect/odbc/download-odbc-driver-for-sql-server).
 
 ## O que é gerado
 
@@ -66,12 +94,14 @@ meu_projeto/
 Guarda as credenciais de origem e destino em variáveis `DB_ORIGEM_*` e `DB_DESTINO_*`:
 
 ```bash
+DB_ORIGEM_TYPE=postgresql
 DB_ORIGEM_HOST=localhost
 DB_ORIGEM_PORT=5432
 DB_ORIGEM_NAME=postgres
 DB_ORIGEM_USER=postgres
 DB_ORIGEM_PASSWORD=postgres
 
+DB_DESTINO_TYPE=postgresql
 DB_DESTINO_HOST=localhost
 DB_DESTINO_PORT=5432
 DB_DESTINO_NAME=postgres
@@ -129,6 +159,8 @@ Se ainda não existir `pyproject.toml`, o conduto inicializa o projeto e instala
 uv init --no-readme
 uv add pyyaml jinja2 polars dagster
 ```
+
+E também a lib oficial do SGBD escolhido: `psycopg[binary]` (PostgreSQL), `pymysql` (MySQL) ou `pyodbc` (SQL Server).
 
 ## Como funciona
 

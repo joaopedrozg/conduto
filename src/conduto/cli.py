@@ -1,3 +1,4 @@
+import platform
 import typer
 import questionary
 from pathlib import Path
@@ -6,6 +7,7 @@ from rich.text import Text
 from rich.panel import Panel
 from rich.rule import Rule
 from rich.prompt import Prompt
+from .adapters import ADAPTERS, eh_administrador, instalar_driver_sqlserver, testar_conexao
 from .env_render import env_render
 from .gerar_project import setup_uv_environment
 from .schemas_render import schemas_render
@@ -14,18 +16,93 @@ app = typer.Typer()
 console = Console()
 
 custom_style = questionary.Style([
-    ('pointer', 'fg:cyan bold'),      # Cor da setinha (ponteiro) e negrito
-    ('highlighted', 'fg:green bold'), # Cor do texto do item atualmente selecionado
-    ('answer', 'fg:yellow bold'),     # Cor após confirmar a escolha
+    ('pointer', 'fg:cyan bold'),
+    ('highlighted', 'fg:green bold'),
+    ('answer', 'fg:yellow bold'),
 ])
 
+
+def cancelar():
+    console.print(Text("Opera??o cancelada.", style="bold yellow"))
+    raise typer.Exit(code=1)
+
+
+def coletar_credenciais(rotulo: str):
+    while True:
+        console.print(Rule(style="dim blue"))
+        sgbd = questionary.select(
+            f"Selecione o SGBD de {rotulo}:",
+            choices=list(ADAPTERS.keys()),
+            style=custom_style,
+        ).ask()
+        if sgbd is None:
+            cancelar()
+        adapter = ADAPTERS[sgbd]
+
+        console.print(Rule(style="dim blue"))
+        console.print(Text(f'Credenciais do banco de dados de {rotulo} ({adapter.nome})', style="bold yellow"))
+
+        credenciais = {
+            "tipo": adapter.tipo,
+            "host": Prompt.ask("HOST:", default=adapter.host_padrao),
+            "port": Prompt.ask("PORT:", default=adapter.porta_padrao),
+            "database": Prompt.ask("DATABASE:", default=adapter.banco_padrao),
+            "user": Prompt.ask("USERNAME:", default=adapter.usuario_padrao),
+            "password": questionary.password(
+                "PASSWORD:",
+                default=adapter.senha_padrao,
+                style=custom_style,
+            ).ask(),
+        }
+
+        while True:
+            ok, erro = testar_conexao(adapter, credenciais)
+            if ok:
+                console.print(Text(f"Conex\u00e3o com {adapter.nome} ({rotulo}) testada com sucesso!", style="bold green"))
+                return credenciais, adapter
+
+            console.print(Text(f"Falha ao conectar em {adapter.nome}: {erro}", style="bold red"))
+            opcoes = ["Digitar novamente", "Continuar mesmo assim"]
+            if adapter.tipo == "sqlserver" and "driver ODBC" in erro:
+                opcoes.insert(0, "Instalar driver automaticamente")
+            escolha = questionary.select(
+                "O que deseja fazer?",
+                choices=opcoes,
+                style=custom_style,
+            ).ask()
+
+            if escolha is None:
+                cancelar()
+            if escolha == "Digitar novamente":
+                break
+            if escolha == "Continuar mesmo assim":
+                return credenciais, adapter
+
+            if platform.system() == "Windows" and not eh_administrador():
+                console.print(Panel(
+                    "A instalação exige permissão de administrador do Windows.\n"
+                    "Uma janela de confirmação (UAC) vai aparecer na frente — clique em \"Sim\".\n"
+                    "O download e a instalação rodam em segundo plano, sem abrir janela do PowerShell.",
+                    border_style="yellow",
+                    title="Permissão de administrador",
+                    expand=False,
+                ))
+            ok_instalacao, mensagem = instalar_driver_sqlserver()
+            if ok_instalacao:
+                console.print(Text(mensagem, style="bold green"))
+                console.print(Text(
+                    "Driver instalado. Testando a conexão novamente com as credenciais já informadas...",
+                    style="bold cyan",
+                ))
+            else:
+                console.print(Text(mensagem, style="bold red"))
+
+
 @app.command()
-def init(project_name: str = typer.Argument(None, help="Nome do projeto (opcional se já estiver em um projeto uv)")):
-    # Detecta se já estamos dentro de um projeto uv (existe pyproject.toml)
+def init(project_name: str = typer.Argument(None, help="Nome do projeto (opcional se j\u00e1 estiver em um projeto uv)")):
     cwd = Path.cwd()
     em_projeto_uv = (cwd / "pyproject.toml").exists()
 
-    # Cria o texto principal
     texto_titulo = Text("Bem vindo ao Conduto!", style="bold cyan")
 
     if em_projeto_uv:
@@ -43,68 +120,15 @@ def init(project_name: str = typer.Argument(None, help="Nome do projeto (opciona
         nome_projeto_arte = Text(f" {nome_projeto} ", style="bold white on blue")
         mensagem_completa = texto_titulo + texto_instrucao + nome_projeto_arte
 
-    # Exibe dentro de um painel com bordas
     console.print(Panel(mensagem_completa, border_style="green", expand=False, width=100))
 
-    console.print(Rule(style="dim blue"))
-
-    db_origem = questionary.select(
-        "Selecione o SGBD de origem:",
-        choices=[
-            "1) PostgreSQL",
-            "2) MySQL",
-            "3) SQLServer"
-        ],
-        style=custom_style
-    ).ask()
-    console.print(Rule(style="dim blue"))
-    console.print(Text('Credenciais do banco de dados de origem', style="bold yellow"))
-
-    host_db_origem = Prompt.ask("HOST:", default="localhost")
-    port_db_origem = Prompt.ask("PORT:", default="5432")
-    database_db_origem = Prompt.ask("DATABASE:", default="postgres")
-    user_db_origem = Prompt.ask("USERNAME:", default="postgres")
-    senha_db_origem = Prompt.ask("PASSWORD:", default="postgres", password=True)
-
-    console.print(Rule(style="dim blue"))
-
-    db_destino = questionary.select(
-        "Selecione o SGBD de destino:",
-        choices=[
-            "1) PostgreSQL",
-            "2) MySQL",
-            "3) SQLServer"
-        ],
-        style=custom_style
-    ).ask()
-
-    console.print(Rule(style="dim blue"))
-
-    console.print(Text('Credenciais do banco de dados de destino', style="bold yellow"))
-
-    host_db_destino = Prompt.ask("HOST:", default="localhost")
-    port_db_destino = Prompt.ask("PORT:", default="5432")
-    database_db_destino = Prompt.ask("DATABASE:", default="postgres")
-    user_db_destino = Prompt.ask("USERNAME:", default="postgres")
-    senha_db_destino = Prompt.ask("PASSWORD:", default="postgres", password=True)
+    origem, adapter_origem = coletar_credenciais("origem")
+    destino, adapter_destino = coletar_credenciais("destino")
 
     context = {
         "project_name": nome_projeto,
-        "db_destino_tipo": db_destino,
-        "origem": {
-            "host": host_db_origem,
-            "port": port_db_origem,
-            "database": database_db_origem,
-            "user": user_db_origem,
-            "password": senha_db_origem,
-        },
-        "destino": {
-            "host": host_db_destino,
-            "port": port_db_destino,
-            "database": database_db_destino,
-            "user": user_db_destino,
-            "password": senha_db_destino,
-        }
+        "origem": origem,
+        "destino": destino,
     }
 
     if not em_projeto_uv:
@@ -113,7 +137,20 @@ def init(project_name: str = typer.Argument(None, help="Nome do projeto (opciona
     env_path = env_render(context, output_dir=project_dir)
     schemas_render(project_dir, context)
     if env_path is not None and env_path.exists():
-        setup_uv_environment(project_dir)
+        drivers = {adapter_origem.driver, adapter_destino.driver}
+        setup_uv_environment(project_dir, drivers=drivers)
+
+
+@app.command()
+def install_sqlserver_driver():
+    """Baixa e instala o ODBC Driver for SQL Server automaticamente."""
+    console.print(Text("Instalando o ODBC Driver for SQL Server...", style="bold yellow"))
+    ok, mensagem = instalar_driver_sqlserver()
+    if ok:
+        console.print(Text(mensagem, style="bold green"))
+    else:
+        console.print(Text(mensagem, style="bold red"))
+        raise typer.Exit(code=1)
 
 @app.command()
 def build():

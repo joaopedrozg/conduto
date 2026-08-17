@@ -2,11 +2,12 @@ from pathlib import Path
 import subprocess
 
 from rich.console import Console
+from rich.markup import escape as rich_escape
 
 console = Console()
 
 
-def setup_uv_environment(base_path: Path):
+def setup_uv_environment(base_path: Path, drivers: list | None = None):
     # 1. Inicializar projeto uv (caso pyproject.toml nao exista)
     pyproject = base_path / "pyproject.toml"
     if not pyproject.exists():
@@ -27,12 +28,16 @@ def setup_uv_environment(base_path: Path):
         console.print("Projeto uv detectado, pulando 'uv init'.")
 
     # 2. Adicionar apenas as dependencias que ainda nao estao declaradas
-    dependencies = ["pyyaml", "jinja2", "polars", "dagster"]
+    dependencies = ["pyyaml", "jinja2", "polars", "dagster"] + list(drivers or [])
+
+    def _nome_dep(dep: str) -> str:
+        return dep.split("[")[0].split(">=")[0].strip()
+
     ja_declaradas = []
     if pyproject.exists():
         conteudo = pyproject.read_text(encoding="utf-8")
         for dep in dependencies:
-            if dep in conteudo:
+            if _nome_dep(dep) in conteudo:
                 ja_declaradas.append(dep)
     pendentes = [dep for dep in dependencies if dep not in ja_declaradas]
 
@@ -40,7 +45,7 @@ def setup_uv_environment(base_path: Path):
         console.print("Dependencias ja declaradas no projeto, nada a fazer.")
         return
 
-    console.print(f"Adicionando dependencias: {', '.join(pendentes)}")
+    console.print(f"Adicionando dependencias: {rich_escape(', '.join(pendentes))}")
     cmd = ["uv", "add", *pendentes]
     result = subprocess.run(
         cmd,
