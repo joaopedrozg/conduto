@@ -1,0 +1,18 @@
+table: pedidos
+schema: public
+description: "Tabela transacional de pedidos"
+columns:
+  - name: id
+    type: integer
+    primary_key: true
+    nullable: false
+  - name: cliente_id
+    type: integer
+    foreign_key: clientes(id)
+    nullable: false
+  - name: valor_total
+    type: numeric(10, 2)
+    nullable: false
+  - name: data_pedido
+    type: timestamp
+    default: CURRENT_TIMESTAMP

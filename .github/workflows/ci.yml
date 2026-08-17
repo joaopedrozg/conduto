@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install project
+        run: uv sync
+
+      - name: Check imports
+        run: uv run python -c "import forge.cli, forge.env_render, forge.schemas_render, forge.gerar_project"
+
+      - name: Smoke test CLI
+        run: uv run forge --help
+
+      - name: Build package
+        run: uv build
