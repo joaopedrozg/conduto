@@ -1,5 +1,5 @@
 [project]
-name = "forgepy"
+name = "conduto"
 version = "0.1.0"
 description = "CLI to scaffold data migration/ELT projects with YAML schemas and a uv-managed environment."
 readme = "README.md"
@@ -25,7 +25,12 @@ dependencies = [
 ]
 
 [project.scripts]
-forge = "forge.cli:app"
+conduto = "conduto.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/joaopedrozg/conduto"
+Repository = "https://github.com/joaopedrozg/conduto"
+Issues = "https://github.com/joaopedrozg/conduto/issues"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -38,4 +43,4 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-forge = ["templates/**/*.jinja"]
+conduto = ["templates/**/*.jinja"]

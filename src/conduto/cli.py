@@ -22,7 +22,7 @@ custom_style = questionary.Style([
 @app.command()
 def init(project_name: str):
     # Cria o texto principal
-    texto_titulo = Text("Bem vindo ao Forge!", style="bold cyan")
+    texto_titulo = Text("Bem vindo ao Conduto!", style="bold cyan")
 
     # Cria a mensagem de instrução
     texto_instrucao = Text("\nVamos criar um novo projeto chamado: ", style="dim white")
