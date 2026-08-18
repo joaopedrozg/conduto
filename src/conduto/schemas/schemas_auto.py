@@ -44,8 +44,8 @@ def gerar_schemas_automaticos(
     console.print(Text(f"{len(tabelas)} tabela(s) encontrada(s).", style="bold cyan"))
     escolhas = [
         questionary.Choice(
-            # Texto fixo em branco: apenas a bolinha muda de cor ao marcar
-            title=[("class:text", f"{t['schema']}.{t['table']}" if t["schema"] else t["table"])],
+            # Titulo em texto puro: necessario para o filtro de busca funcionar
+            title=f"{t['schema']}.{t['table']}" if t["schema"] else t["table"],
             value={"schema": t["schema"], "table": t["table"]},
         )
         for t in tabelas
@@ -55,7 +55,12 @@ def gerar_schemas_automaticos(
         choices=escolhas,
         style=custom_style,
         qmark="",
-        instruction="(espaço para marcar/desmarcar, enter para confirmar)",
+        use_search_filter=True,
+        use_jk_keys=False,
+        instruction=(
+            "(setas para navegar, espaco para marcar/desmarcar, "
+            "digite para filtrar, backspace limpa a busca, enter para confirmar)"
+        ),
     ).ask()
     if selecionadas is None:
         console.print(Text("Operação cancelada.", style="bold yellow"))

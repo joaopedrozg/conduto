@@ -68,7 +68,7 @@ O comando pergunta interativamente:
 
 Depois de testar as duas conexões, o conduto pergunta como você quer configurar os schemas das tabelas:
 
-- **Gerar automaticamente**: o conduto lista as tabelas do banco de origem, permite marcar/desmarcar quais incluir, lê as colunas (tipos, PK, FK, unique, default e nullable) e gera os `schemas/*.yml` e o `main.yml` na ordem de dependência (pais antes de filhos).
+- **Gerar automaticamente**: o conduto lista as tabelas do banco de origem, permite buscar por nome e marcar/desmarcar quais incluir, lê as colunas (tipos, PK, FK, unique, default e nullable) e gera os `schemas/*.yml` e o `main.yml` na ordem de dependência (pais antes de filhos).
 - **Configurar manualmente**: mantém o comportamento atual e gera os três schemas de exemplo (clientes, pedidos e produtos) para você editar.
 
 ### DDL para o banco de destino
@@ -90,6 +90,29 @@ conduto ddl --no-apply
 ```
 
 As flags `--apply` e `--no-apply` pulam a pergunta interativa (útil para scripts). O comando lê o `.env` (credenciais de destino), o `main.yml` (ordem de dependência) e os `schemas/*.yml`, traduzindo tipos e funções (ex.: `gen_random_uuid()`, `clock_timestamp()`) para o SGBD de destino (PostgreSQL, MySQL ou SQL Server). Por padrão roda no diretório atual; use `--dir caminho/do/projeto` para outro diretório.
+
+### Inferindo colunas de tabelas novas
+
+Para adicionar uma tabela nova ao projeto, crie o schema com apenas o nome
+(ou adicione o caminho no `main.yml`) e deixe as colunas para o conduto:
+
+```yaml
+# schemas/minha_tabela.yml
+table: minha_tabela
+```
+
+```bash
+# infere as colunas de todos os schemas sem colunas e registra no main.yml
+conduto inferir
+
+# ou infere/atualiza uma tabela específica
+conduto inferir --tabela minha_tabela
+```
+
+O comando lê as credenciais de origem do `.env`, consulta o banco (tipos, PK,
+FK, unique, default e nullable) e escreve as `columns:` no schema, preservando
+o que já existir (description, schedule etc.). Depois rode `conduto schedules`
+para gerar o schedule e o código Dagster da tabela nova.
 
 ### Schedules e Dagster
 
@@ -210,6 +233,14 @@ DB_DESTINO_SCHEMA=public
 DB_DESTINO_USER=postgres
 DB_DESTINO_PASSWORD=postgres
 ```
+
+Para cargas pesadas no PostgreSQL (ex.: Supabase), o destino pode estourar o
+`statement_timeout` do servidor durante o `COPY`. Para evitar isso:
+
+- Use o **session pooler** (porta `5432`) ou a conexão direta; o transaction
+  pooler (`6543`) não permite ajustar timeouts de sessão.
+- Defina `DB_DESTINO_STATEMENT_TIMEOUT` no `.env` (em milissegundos; `0`
+  desativa o limite). O pipeline executa `SET statement_timeout` ao conectar.
 
 > **Importante:** o `.env` contém credenciais e não deve ser versionado.
 

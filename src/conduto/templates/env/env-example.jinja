@@ -13,3 +13,6 @@ DB_DESTINO_NAME={{ destino.database }}
 DB_DESTINO_USER={{ destino.user }}
 DB_DESTINO_PASSWORD={{ destino.password }}
 DB_DESTINO_SCHEMA={{ destino.schema }}
+# Opcional (PostgreSQL): statement_timeout da carga em ms (0 = sem limite).
+# Requer session pooler (porta 5432) ou conexao direta; o transaction pooler (6543) nao permite SET de sessao.
+# DB_DESTINO_STATEMENT_TIMEOUT=0

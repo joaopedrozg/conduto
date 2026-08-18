@@ -2,6 +2,7 @@ import platform
 import subprocess
 import typer
 import questionary
+from typing import Optional
 from pathlib import Path
 from rich.console import Console
 from rich.text import Text
@@ -26,6 +27,7 @@ from conduto.ddl.ddl_render import (
 from conduto.env.env_render import env_render
 from conduto.project_base.gerar_project import gerar_comando_dagster, setup_uv_environment
 from conduto.schemas.schemas_auto import gerar_schemas_automaticos
+from conduto.schemas.schemas_inferir import inferir_colunas
 from conduto.schemas.schemas_render import schemas_render
 from conduto.schedules.dagster_render import garantir_config_dagster
 from conduto.schedules.schedules_auto import (
@@ -562,6 +564,26 @@ def build():
     """
     typer.echo("Building the project...")
     # Add logic to build the project here
+
+
+@app.command()
+def inferir(
+    directory: str = typer.Option(".", "--dir", "-d", help="Diretório do projeto conduto (padrão: atual)"),
+    tabela: Optional[str] = typer.Option(None, "--tabela", "-t", help="Nome da tabela para inferir (padrão: todas sem colunas)"),
+):
+    """Infere as colunas das tabelas do banco de origem nos schemas do projeto."""
+    project_dir = Path(directory)
+    try:
+        inferidas = inferir_colunas(project_dir, tabela)
+    except Exception as erro:
+        console.print(Text(f"Falha ao inferir colunas: {erro}", style="bold red"))
+        raise typer.Exit(code=1)
+    if not inferidas:
+        raise typer.Exit(code=1)
+    console.print(Text(
+        f"{len(inferidas)} tabela(s) inferida(s). Rode 'conduto schedules' para gerar os schedules e o código Dagster.",
+        style="bold green",
+    ))
 
 
 if __name__ == "__main__":

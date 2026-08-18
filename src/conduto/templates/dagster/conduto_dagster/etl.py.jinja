@@ -15,6 +15,9 @@ Edite à vontade: o restante do pipeline lê este arquivo em tempo de execução
 from __future__ import annotations
 
 import json
+import queue
+import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -101,6 +104,28 @@ def conectar(tipo: str, host: str, porta: str, banco: str, usuario: str, senha: 
     raise ValueError(f"SGBD não suportado: {tipo}")
 
 
+def _ajustar_statement_timeout(conn, timeout: str, context=None) -> None:
+    """Ajusta o statement_timeout da conexão de destino no PostgreSQL.
+
+    Cargas via COPY podem estourar o limite default do servidor (ex.: o
+    Supabase usa 10s). O valor vem de ``DB_DESTINO_STATEMENT_TIMEOUT`` no
+    .env, em milissegundos (``0`` desativa o limite). Funciona em conexão
+    direta ou no session pooler (porta 5432); o transaction pooler (porta
+    6543) não permite ``SET`` de sessão.
+    """
+    if timeout is None:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"SET statement_timeout = {int(timeout)}")
+    except Exception as erro:
+        if context is not None:
+            context.log.warning(
+                f"Não foi possível ajustar o statement_timeout para {timeout}ms "
+                f"(use o session pooler/porta 5432 ou conexão direta): {erro}"
+            )
+
+
 def _conn_str_sqlserver(host: str, porta: str, banco: str, usuario: str, senha: str) -> str:
     import pyodbc
     drivers = [d for d in pyodbc.drivers() if "ODBC Driver" in d]
@@ -149,11 +174,27 @@ def _executar(conn, sql: str, params: Optional[Sequence] = None) -> None:
     conn.commit()
 
 
-def _ler(conn, sql: str, params: Optional[Sequence] = None) -> List[Dict[str, Any]]:
-    with conn.cursor() as cur:
-        cur.execute(sql, params or ())
-        colunas = [descricao[0] for descricao in cur.description]
-        return [dict(zip(colunas, linha)) for linha in cur.fetchall()]
+_FIM = object()
+_LOTE = 2000
+
+
+def _produtor(conn, sql: str, params: Optional[Sequence], fila, lote: int = _LOTE) -> None:
+    """Le as linhas da origem em lotes e coloca na fila para o consumidor gravar."""
+    try:
+        with conn.cursor() as cur:
+            cur.arraysize = lote
+            cur.execute(sql, params or ())
+            colunas = [descricao[0] for descricao in cur.description]
+            fila.put(colunas)
+            while True:
+                bloco = cur.fetchmany(lote)
+                if not bloco:
+                    break
+                fila.put(bloco)
+    except Exception as erro:
+        fila.put(erro)
+    finally:
+        fila.put(_FIM)
 
 
 def _ultimo_valor(conn, tipo: str, destino: str, coluna: str):
@@ -176,27 +217,87 @@ def _truncar(conn, tipo: str, destino: str) -> None:
         _executar(conn, f"DELETE FROM {destino}")
 
 
-def _serializar(valor: Any) -> Any:
-    """Converte dicts/listas para JSON antes de gravar no banco."""
-    if isinstance(valor, (dict, list)):
-        return json.dumps(valor, ensure_ascii=False)
+def _sanitizar(valor: Any) -> Any:
+    """Remove bytes NUL (0x00) de strings (PostgreSQL rejeita NUL em campos text)."""
+    if isinstance(valor, str):
+        return valor.replace("\x00", "") if "\x00" in valor else valor
+    if isinstance(valor, dict):
+        return {chave: _sanitizar(item) for chave, item in valor.items()}
+    if isinstance(valor, list):
+        return [_sanitizar(item) for item in valor]
     return valor
 
 
-def _inserir(conn, tipo: str, destino: str, colunas: List[str], registros) -> int:
-    if not registros:
+def _serializar(valor: Any) -> Any:
+    """Converte dicts/listas para JSON antes de gravar no banco."""
+    if isinstance(valor, (dict, list)):
+        return json.dumps(_sanitizar(valor), ensure_ascii=False)
+    if isinstance(valor, str) and "\x00" in valor:
+        return valor.replace("\x00", "")
+    return valor
+
+
+def _copiar(conn, tipo: str, destino: str, fila, context=None) -> int:
+    """Consome a fila de lotes da origem e grava no destino.
+
+    No PostgreSQL usa COPY FROM STDIN (um unico round trip); nos demais,
+    INSERT em lote por bloco.
+    """
+    primeiro = fila.get()
+    if isinstance(primeiro, Exception):
+        raise primeiro
+    colunas = primeiro
+    if not colunas:
         return 0
-    nomes = [c for c in colunas if c in registros[0]]
-    if not nomes:
-        return 0
-    ph = ", ".join(_placeholder(tipo) for _ in nomes)
-    cols_sql = ", ".join(_aspas(tipo, c) for c in nomes)
-    sql = f"INSERT INTO {destino} ({cols_sql}) VALUES ({ph})"
-    valores = [tuple(_serializar(r[c]) for c in nomes) for r in registros]
+    cols_sql = ", ".join(_aspas(tipo, c) for c in colunas)
+    total = 0
     with conn.cursor() as cur:
-        cur.executemany(sql, valores)
+        if tipo == "postgresql":
+            sql = f"COPY {destino} ({cols_sql}) FROM STDIN"
+            with cur.copy(sql) as copy:
+                while True:
+                    item = fila.get()
+                    if item is _FIM:
+                        break
+                    if isinstance(item, Exception):
+                        raise item
+                    for linha in item:
+                        copy.write_row([_serializar(v) for v in linha])
+                        total += 1
+                    if context is not None and total % 20000 == 0:
+                        context.log.info(f"Copiadas {total} linha(s) para {destino}.")
+        else:
+            ph = ", ".join(_placeholder(tipo) for _ in colunas)
+            sql = f"INSERT INTO {destino} ({cols_sql}) VALUES ({ph})"
+            rapido = tipo == "sqlserver"
+            if rapido:
+                # fast_executemany envia o lote como operacao em massa (TVP)
+                # em vez de 1 round trip por linha, muito mais rapido no pyodbc.
+                cur.fast_executemany = True
+            while True:
+                item = fila.get()
+                if item is _FIM:
+                    break
+                if isinstance(item, Exception):
+                    raise item
+                valores = [tuple(_serializar(v) for v in linha) for linha in item]
+                try:
+                    cur.executemany(sql, valores)
+                except Exception:
+                    if rapido:
+                        # Fallback seguro: desfaz o lote e tenta sem fast_executemany.
+                        conn.rollback()
+                        cur.fast_executemany = False
+                        rapido = False
+                        cur.executemany(sql, valores)
+                    else:
+                        raise
+                total += len(valores)
+                conn.commit()
+                if context is not None and total % 20000 == 0:
+                    context.log.info(f"Inseridas {total} linha(s) em {destino}.")
     conn.commit()
-    return len(registros)
+    return total
 
 
 def carregar_tabela(tabela: Dict[str, Any], context=None) -> int:
@@ -227,6 +328,12 @@ def carregar_tabela(tabela: Dict[str, Any], context=None) -> int:
         env["DB_DESTINO_HOST"], env["DB_DESTINO_PORT"], env["DB_DESTINO_NAME"],
         env["DB_DESTINO_USER"], env["DB_DESTINO_PASSWORD"],
     )
+    if tipo_destino == "postgresql":
+        _ajustar_statement_timeout(
+            conn_destino,
+            env.get("DB_DESTINO_STATEMENT_TIMEOUT", "0"),
+            context,
+        )
     try:
         colunas = _colunas_origem(conn_origem, tipo_origem, origem)
         if not colunas:
@@ -235,25 +342,49 @@ def carregar_tabela(tabela: Dict[str, Any], context=None) -> int:
         if truncar or modo == "full" or forcar_full:
             _truncar(conn_destino, tipo_destino, destino)
 
+        cols_select = ", ".join(_aspas(tipo_origem, c) for c in colunas)
+
         if forcar_full or modo == "full" or not coluna_inc:
-            registros = _ler(conn_origem, f"SELECT * FROM {origem}")
+            sql = f"SELECT {cols_select} FROM {origem}"
+            params = None
         else:
             watermark = _ultimo_valor(conn_destino, tipo_destino, destino, coluna_inc)
             if watermark is None:
-                registros = _ler(conn_origem, f"SELECT * FROM {origem}")
+                sql = f"SELECT {cols_select} FROM {origem}"
+                params = None
             else:
                 ph = _placeholder(tipo_origem)
                 sql = (
-                    f"SELECT * FROM {origem} "
+                    f"SELECT {cols_select} FROM {origem} "
                     f"WHERE {_aspas(tipo_origem, coluna_inc)} > {ph} "
                     f"ORDER BY {_aspas(tipo_origem, coluna_inc)}"
                 )
-                registros = _ler(conn_origem, sql, [watermark])
+                params = [watermark]
 
-        inseridos = _inserir(conn_destino, tipo_destino, destino, colunas, registros)
+        inicio = time.monotonic()
+        fila = queue.Queue(maxsize=8)
+        thread = threading.Thread(
+            target=_produtor,
+            args=(conn_origem, sql, params, fila),
+            daemon=True,
+        )
+        thread.start()
+        try:
+            inseridos = _copiar(conn_destino, tipo_destino, destino, fila, context)
+        finally:
+            while True:
+                try:
+                    fila.get_nowait()
+                except queue.Empty:
+                    break
+            thread.join(timeout=30)
+
         if context is not None:
             tipo_carga = "full" if (forcar_full or modo == "full" or not coluna_inc) else "incremental"
-            context.log.info(f"Tabela {nome}: {inseridos} linha(s) carregada(s) ({tipo_carga}).")
+            context.log.info(
+                f"Tabela {nome}: {inseridos} linha(s) carregada(s) ({tipo_carga}) "
+                f"em {time.monotonic() - inicio:.1f}s."
+            )
         return inseridos
     finally:
         conn_origem.close()
