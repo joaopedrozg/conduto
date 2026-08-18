@@ -6,13 +6,10 @@ from typing import Any, Dict, List
 
 import questionary
 import typer
-from rich.console import Console
-from rich.text import Text
 
 from conduto.database.adapters import Adapter
 from conduto.database.introspect import descrever_tabela, listar_tabelas
-
-console = Console()
+from conduto.ui import aviso, carregando, console, erro, gerado, info, multi_selecionar, progresso
 
 custom_style = questionary.Style([
     # Fundo preto e apenas a bolinha das opções marcadas em verde (noreverse)
@@ -34,14 +31,14 @@ def gerar_schemas_automaticos(
     Retorna True se os schemas foram gerados automaticamente, False caso contrário.
     Os YAMLs gerados apontam para o schema de destino já escolhido/criado pelo usuário.
     """
-    console.print(Text("Lendo tabelas do banco de origem...", style="bold cyan"))
-    tabelas = listar_tabelas(adapter, credenciais)
+    with carregando("Lendo tabelas do banco de origem..."):
+        tabelas = listar_tabelas(adapter, credenciais)
 
     if not tabelas:
-        console.print(Text("Nenhuma tabela encontrada no banco de origem.", style="bold yellow"))
+        console.print(aviso("Nenhuma tabela encontrada no banco de origem."))
         return False
 
-    console.print(Text(f"{len(tabelas)} tabela(s) encontrada(s).", style="bold cyan"))
+    console.print(info("{qtd} tabela(s) encontrada(s).", qtd=len(tabelas)))
     escolhas = [
         questionary.Choice(
             # Titulo em texto puro: necessario para o filtro de busca funcionar
@@ -50,44 +47,51 @@ def gerar_schemas_automaticos(
         )
         for t in tabelas
     ]
-    selecionadas = questionary.checkbox(
+    selecionadas = multi_selecionar(
         "Selecione as tabelas para gerar os schemas:",
-        choices=escolhas,
-        style=custom_style,
-        qmark="",
-        use_search_filter=True,
-        use_jk_keys=False,
-        instruction=(
+        escolhas,
+        instrucao=(
             "(setas para navegar, espaco para marcar/desmarcar, "
             "digite para filtrar, backspace limpa a busca, enter para confirmar)"
         ),
-    ).ask()
+        style=custom_style,
+        use_search_filter=True,
+        use_jk_keys=False,
+    )
     if selecionadas is None:
-        console.print(Text("Operação cancelada.", style="bold yellow"))
+        console.print(aviso("Operação cancelada."))
         raise typer.Exit(code=1)
 
     if not selecionadas:
-        console.print(Text("Nenhuma tabela selecionada.", style="bold yellow"))
+        console.print(aviso("Nenhuma tabela selecionada."))
         return False
 
-    console.print(Text("Lendo colunas das tabelas selecionadas...", style="bold cyan"))
     descricoes: List[Dict[str, Any]] = []
-    for sel in selecionadas:
-        try:
-            descricao = descrever_tabela(adapter, credenciais, sel["schema"], sel["table"])
-        except Exception as erro:
-            console.print(Text(f"Falha ao ler a tabela {sel['table']}: {erro}", style="bold red"))
-            continue
-        if not descricao["columns"]:
-            console.print(Text(
-                f"Atenção: tabela {sel['table']} não retornou colunas; pulando.", style="bold yellow"
-            ))
-            continue
-        descricao["schema"] = schema_destino
-        descricoes.append(descricao)
+    with progresso(len(selecionadas), "Lendo colunas das tabelas selecionadas...") as (barra, tarefa):
+        for sel in selecionadas:
+            try:
+                descricao = descrever_tabela(adapter, credenciais, sel["schema"], sel["table"])
+            except Exception as exc:
+                console.print(erro(
+                    "Falha ao ler a tabela {tabela}: {erro}",
+                    tabela=sel["table"],
+                    erro=exc,
+                ))
+                barra.advance(tarefa)
+                continue
+            if not descricao["columns"]:
+                console.print(aviso(
+                    "Atenção: tabela {tabela} não retornou colunas; pulando.",
+                    tabela=sel["table"],
+                ))
+                barra.advance(tarefa)
+                continue
+            descricao["schema"] = schema_destino
+            descricoes.append(descricao)
+            barra.advance(tarefa)
 
     if not descricoes:
-        console.print(Text("Não foi possível gerar schemas a partir do banco de origem.", style="bold red"))
+        console.print(erro("Não foi possível gerar schemas a partir do banco de origem."))
         return False
 
     gerar_arquivos(Path(project_dir), project_name, descricoes)
@@ -104,13 +108,13 @@ def gerar_arquivos(project_dir: Path, project_name: str, descricoes: List[Dict[s
     for descricao in descricoes:
         caminho = schemas_dir / f"{descricao['table']}.yml"
         caminho.write_text(_yaml_schema(descricao), encoding="utf-8")
-        console.print(f"[bold green]Gerado:[/bold green] [yellow]{caminho}[/yellow]")
+        console.print(gerado(caminho))
 
     main_path = project_dir / "main.yml"
     main_path.write_text(
         _yaml_main(project_name, [d["table"] for d in descricoes]), encoding="utf-8"
     )
-    console.print(f"[bold green]Gerado:[/bold green] [yellow]{main_path}[/yellow]")
+    console.print(gerado(main_path))
     return main_path
 
 

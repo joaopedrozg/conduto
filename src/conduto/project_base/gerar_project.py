@@ -3,22 +3,29 @@
 import subprocess
 from pathlib import Path
 
-from rich.console import Console
-from rich.panel import Panel
 from rich.text import Text
 
 from conduto.schedules.dagster_render import garantir_config_dagster
+from conduto.ui import (
+    CORES,
+    aviso,
+    carregando,
+    console,
+    erro,
+    gerado,
+    info,
+    neutro,
+    painel,
+    t,
+)
 
-console = Console()
 
-
-def gerar_comando_dagster(project_dir: Path) -> None:
+def gerar_comando_dagster(project_dir: Path):
     """Gera scripts prontos para subir o servidor Dagster do projeto."""
     project_dir = Path(project_dir)
     if not garantir_config_dagster(project_dir):
-        console.print(Text(
-            "Código Dagster não encontrado — rode 'conduto schedules' para gerar antes de usar os scripts.",
-            style="bold yellow",
+        console.print(aviso(
+            "Código Dagster não encontrado — rode 'conduto schedules' para gerar antes de usar os scripts."
         ))
     ps1 = project_dir / "run_dagster.ps1"
     ps1.write_text(
@@ -38,8 +45,8 @@ def gerar_comando_dagster(project_dir: Path) -> None:
         sh.chmod(0o755)
     except OSError:
         pass
-    console.print(f"[bold green]Gerado:[/bold green] [yellow]{ps1}[/yellow]")
-    console.print(f"[bold green]Gerado:[/bold green] [yellow]{sh}[/yellow]")
+    console.print(gerado(ps1))
+    console.print(gerado(sh))
     return ps1
 
 
@@ -47,10 +54,10 @@ def setup_uv_environment(base_path: Path, drivers: list | None = None):
     """Inicializa o projeto uv (sem pasta src) e adiciona as dependências do pipeline."""
     pyproject = base_path / "pyproject.toml"
 
-    # 1. Inicializar projeto uv (caso pyproject.toml nao exista)
+    # 1. Inicializar projeto uv (caso pyproject.toml não exista)
     if not pyproject.exists():
-        console.print(Text("Configurando o ambiente uv do projeto...", style="bold cyan"))
-        with console.status("[bold cyan]Executando uv init (sem pasta src)...[/bold cyan]"):
+        console.print(info("Configurando o ambiente uv do projeto..."))
+        with carregando("Executando uv init (sem pasta src)..."):
             init_result = subprocess.run(
                 ["uv", "init", "--no-readme", "--bare"],
                 cwd=base_path,
@@ -61,12 +68,12 @@ def setup_uv_environment(base_path: Path, drivers: list | None = None):
             )
         if init_result.returncode != 0:
             if init_result.stderr:
-                console.print(init_result.stderr, style="bold red")
+                console.print(erro(init_result.stderr))
             raise subprocess.CalledProcessError(init_result.returncode, init_result.args)
     else:
-        console.print(Text("Projeto uv detectado, pulando 'uv init'.", style="dim"))
+        console.print(neutro("Projeto uv detectado, pulando 'uv init'."))
 
-    # 2. Adicionar apenas as dependencias que ainda nao estao declaradas
+    # 2. Adicionar apenas as dependências que ainda não estão declaradas
     dependencies = ["pyyaml", "jinja2", "polars", "dagster", "dagster-webserver"] + list(drivers or [])
 
     def _nome_dep(dep: str) -> str:
@@ -81,11 +88,11 @@ def setup_uv_environment(base_path: Path, drivers: list | None = None):
     pendentes = [dep for dep in dependencies if dep not in ja_declaradas]
 
     if not pendentes:
-        console.print(Text("Dependências já declaradas no projeto, nada a fazer.", style="dim"))
+        console.print(neutro("Dependências já declaradas no projeto, nada a fazer."))
         return
 
-    console.print(Text(f"Adicionando dependências: {', '.join(pendentes)}", style="bold cyan"))
-    with console.status(f"[bold cyan]Instalando {len(pendentes)} dependência(s)...[/bold cyan]"):
+    console.print(info("Adicionando dependências: {lista}", lista=", ".join(pendentes)))
+    with carregando("Instalando {qtd} dependência(s)...", qtd=len(pendentes)):
         result = subprocess.run(
             ["uv", "add", *pendentes],
             cwd=base_path,
@@ -98,12 +105,12 @@ def setup_uv_environment(base_path: Path, drivers: list | None = None):
         if result.stdout:
             console.print(result.stdout)
         if result.stderr:
-            console.print(result.stderr, style="bold red")
+            console.print(erro(result.stderr))
         raise subprocess.CalledProcessError(result.returncode, ["uv", "add", *pendentes])
 
     corpo = Text()
-    corpo.append("Ambiente configurado com sucesso!", style="bold green")
+    corpo.append(t("Ambiente configurado com sucesso!"), style=CORES["sucesso"])
     corpo.append("\n\n")
-    corpo.append("Dependências: ", style="dim")
-    corpo.append(", ".join(dependencies), style="yellow")
-    console.print(Panel(corpo, border_style="green", title="Setup", expand=False))
+    corpo.append(t("Dependências: "), style=CORES["neutro"])
+    corpo.append(", ".join(dependencies), style=CORES["detalhe"])
+    console.print(painel("Setup", corpo))

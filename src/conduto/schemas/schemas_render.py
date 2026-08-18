@@ -1,9 +1,8 @@
 from pathlib import Path
 
 from jinja2 import Template
-from rich.console import Console
 
-console = Console()
+from conduto.ui import console, erro, gerado, t
 
 
 def schemas_render(project_dir, context):
@@ -15,10 +14,8 @@ def schemas_render(project_dir, context):
 
     template_paths = sorted(templates_dir.glob("*.jinja"))
     if not template_paths:
-        console.print(
-            f"[bold red]Erro:[/bold red] Nenhum template encontrado em: [yellow]{templates_dir}[/yellow]"
-        )
-        raise FileNotFoundError(f"Nenhum template encontrado em: {templates_dir}")
+        console.print(erro("Nenhum template encontrado em: {diretorio}", diretorio=templates_dir))
+        raise FileNotFoundError(t("Nenhum template encontrado em: {diretorio}", diretorio=templates_dir))
 
     for template_path in template_paths:
         output_name = template_path.name.removesuffix("-example.yml.jinja") + ".yml"
@@ -35,6 +32,6 @@ def schemas_render(project_dir, context):
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(rendered)
 
-        console.print(f"[bold green]Gerado:[/bold green] [yellow]{output_path}[/yellow]")
+        console.print(gerado(output_path))
 
     return target_dir / "main.yml"

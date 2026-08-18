@@ -3,10 +3,8 @@
 from pathlib import Path
 
 from jinja2 import Template
-from rich.console import Console
-from rich.text import Text
 
-console = Console()
+from conduto.ui import console, erro, gerado, neutro, t
 
 
 def gerar_dagster(project_dir: Path, project_name: str) -> Path:
@@ -22,8 +20,8 @@ def gerar_dagster(project_dir: Path, project_name: str) -> Path:
 
     template_paths = sorted(templates_dir.rglob("*.jinja"))
     if not template_paths:
-        console.print("[bold red]Erro:[/bold red] Nenhum template Dagster encontrado.")
-        raise FileNotFoundError(f"Nenhum template Dagster em: {templates_dir}")
+        console.print(erro("Nenhum template Dagster encontrado."))
+        raise FileNotFoundError(t("Nenhum template Dagster em: {diretorio}", diretorio=templates_dir))
 
     for template_path in template_paths:
         rel = template_path.relative_to(templates_dir)
@@ -32,7 +30,7 @@ def gerar_dagster(project_dir: Path, project_name: str) -> Path:
         template = Template(template_path.read_text(encoding="utf-8"))
         rendered = template.render(context)
         output_path.write_text(rendered, encoding="utf-8")
-        console.print(f"[bold green]Gerado:[/bold green] [yellow]{output_path}[/yellow]")
+        console.print(gerado(output_path))
 
     return target_dir / "definitions.py"
 
@@ -58,8 +56,5 @@ def garantir_config_dagster(project_dir: Path) -> bool:
         'module_name = "conduto_dagster.definitions"\n'
     )
     pyproject.write_text(conteudo.rstrip() + "\n" + bloco, encoding="utf-8")
-    console.print(Text(
-        "Bloco [tool.dagster] adicionado ao pyproject.toml (dagster dev).",
-        style="dim",
-    ))
+    console.print(neutro("Bloco [tool.dagster] adicionado ao pyproject.toml (dagster dev)."))
     return True

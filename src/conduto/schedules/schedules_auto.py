@@ -5,13 +5,9 @@ from typing import Any
 from typing import Any, Dict, List, Optional
 
 import yaml
-from rich.console import Console
-from rich.table import Table
-from rich.text import Text
 
 from conduto.schedules.dagster_render import gerar_dagster
-
-console = Console()
+from conduto.ui import aviso, console, erro, sucesso, t, tabela
 
 CRON_PADRAO = "0 * * * *"
 
@@ -154,36 +150,36 @@ def nome_projeto(project_dir: Path) -> str:
 
 
 def _mostrar_resumo(tabelas: List[Dict[str, Any]]) -> None:
-    tabela = Table(
-        title="Schedules aplicados",
-        border_style="dim blue",
-        header_style="bold cyan",
-        pad_edge=False,
+    grade = tabela(
+        "Schedules aplicados",
+        [
+            ("Tabela", "titulo"),
+            ("Cron", "detalhe"),
+            ("Modo", "sucesso"),
+            ("Incremental", "info"),
+            ("Full load", "texto"),
+            ("Truncate", "texto"),
+        ],
+        (
+            (
+                item["table"],
+                item["schedule"].get("cron", ""),
+                item["schedule"].get("mode", ""),
+                item["schedule"].get("incremental_column") or "-",
+                t("sim") if item["schedule"].get("full_load") else t("não"),
+                t("sim") if item["schedule"].get("truncate") else t("não"),
+            )
+            for item in tabelas
+        ),
     )
-    tabela.add_column("Tabela", style="bold white", no_wrap=True, min_width=16)
-    tabela.add_column("Cron", style="yellow")
-    tabela.add_column("Modo", style="green")
-    tabela.add_column("Incremental", style="cyan")
-    tabela.add_column("Full load", style="white")
-    tabela.add_column("Truncate", style="white")
-    for t in tabelas:
-        s = t["schedule"]
-        tabela.add_row(
-            t["table"],
-            s.get("cron", ""),
-            s.get("mode", ""),
-            s.get("incremental_column") or "-",
-            "sim" if s.get("full_load") else "não",
-            "sim" if s.get("truncate") else "não",
-        )
-    console.print(tabela)
+    console.print(grade)
 
 
 def gerar_schedules_automaticos(project_dir: Path, project_name: str) -> List[Dict[str, Any]]:
     """Aplica/infere os schedules nos schemas e gera o código Dagster padrão."""
     tabelas = aplicar_schedules(Path(project_dir))
     gerar_dagster(Path(project_dir), project_name)
-    console.print(Text("Schedules e código Dagster gerados com sucesso!", style="bold green"))
+    console.print(sucesso("Schedules e código Dagster gerados com sucesso!"))
     _mostrar_resumo(tabelas)
     return tabelas
 
@@ -200,13 +196,12 @@ def garantir_codigo_dagster(project_dir: Path) -> bool:
         return True
     if not (project_dir / "main.yml").exists():
         return False
-    console.print(Text(
-        "Código Dagster não encontrado — gerando a partir dos schemas...",
-        style="bold yellow",
+    console.print(aviso(
+        "Código Dagster não encontrado — gerando a partir dos schemas..."
     ))
     try:
         gerar_schedules_automaticos(project_dir, nome_projeto(project_dir))
         return True
-    except Exception as erro:
-        console.print(Text(f"Falha ao gerar o código Dagster: {erro}", style="bold red"))
+    except Exception as exc:
+        console.print(erro("Falha ao gerar o código Dagster: {erro}", erro=exc))
         return False

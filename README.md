@@ -24,10 +24,12 @@ CLI para criar projetos de migração/ELT de dados: gera o `.env` com as credenc
 - Gerenciamento automático de schedules: infere colunas de atualização incremental, cria um schedule padrão de hora em hora por tabela e um schedule para o modelo geral
 - Geração de código Dagster padrão que segue a chave `schedule` de cada schema (`cron`, `mode`, `incremental_column`, `full_load` e `truncate`)
 - Comando `conduto schedules` para (re)gerar os schedules e o código Dagster de um projeto existente
+- Comando `conduto docs`: sobe um servidor web local com a documentação da estrutura do projeto (visão geral, árvore de arquivos, conexões, schemas, schedules, DDL e ambiente)
 - Credenciais visíveis no prompt durante o preenchimento — só vão para o `.env`
 - Instalação da lib oficial do SGBD escolhido (`psycopg[binary]`, `pymysql`, `pyodbc`)
 - Download/instalação automática do ODBC Driver for SQL Server (Windows, Linux e macOS)
-- Feedback visual com `rich` e `questionary`
+- Feedback visual com `rich` e `questionary`: cores semânticas (sucesso, aviso, erro, info), tabelas de resumo e widgets de carregamento (spinner e barra de progresso) nas operações demoradas
+- Detecção automática do idioma da máquina (português ou inglês) com override por comando (`--lang`) ou variável de ambiente (`CONDUTO_LANG`)
 
 ## Instalação
 
@@ -40,6 +42,25 @@ Ou, para usar sem sujar o ambiente atual:
 ```bash
 uv tool install conduto
 ```
+
+## Idioma
+
+O Conduto detecta o idioma da máquina automaticamente (português por padrão,
+com suporte a inglês) e usa essa preferência em todas as mensagens, prompts,
+ajudas de comando e rótulos. A detecção segue esta ordem:
+
+1. `CONDUTO_LANG` (ex.: `CONDUTO_LANG=en conduto init`)
+2. Variáveis de ambiente de locale (`LANG`, `LC_ALL`, `LC_MESSAGES`) e locale do Python
+3. Idioma de interface do Windows
+
+Para forçar um idioma em uma execução, use `--lang pt` ou `--lang en`:
+
+```bash
+conduto --lang en init meu_projeto
+```
+
+> Dica: `--lang` vale para o fluxo do comando; a tela de ajuda (`--help`) segue a
+> detecção automática e pode ser forçada com `CONDUTO_LANG=en conduto --help`.
 
 ## Uso
 
@@ -63,6 +84,18 @@ O comando pergunta interativamente:
 10. Servidor Dagster — pergunta se você quer subir o servidor agora (`uv run dagster dev`) e gera os scripts `run_dagster.ps1`/`run_dagster.sh`
 
 **Dentro de um projeto uv?** Se o diretório atual já tem `pyproject.toml` (por exemplo, após `uv add conduto`), o conduto se adapta: gera `.env`, `main.yml` e `schemas/` direto no projeto atual e adiciona só as dependências que faltam — sem criar subpasta nem rodar `uv init`. **Dentro de um projeto uv?** Se o diretório atual já tem `pyproject.toml` (por exemplo, após `uv add conduto`), o conduto se adapta: gera `.env`, `main.yml` e `schemas/` direto no projeto atual e adiciona só as dependências que faltam — sem criar subpasta nem rodar `uv init`. Nesse caso, use `uv run conduto init` (o nome do projeto vira opcional).
+
+### Documentação web
+
+Sobe um servidor web local com a documentação da estrutura do projeto atual: visão geral,
+árvore de arquivos, conexões do `.env` (senhas mascaradas), schemas/tabelas, schedules,
+DDL e dependências.
+
+```bash
+conduto docs                    # abre http://localhost:8000
+conduto docs --port 9000        # porta específica
+conduto docs --no-open          # sem abrir o navegador automaticamente
+```
 
 ### Geração automática de schemas
 
@@ -328,9 +361,17 @@ uv build
 uv publish
 ```
 
-### Publicar uma vers?o nova (autom?tico)
+### Publicar uma versão nova (automático)
 
-No GitHub, em **Actions ? Release ? Run workflow**, escolha o tipo de bump (`patch`, `minor` ou `major`). O workflow bumpa a vers?o no `pyproject.toml` e `uv.lock`, builda, publica no PyPI (usando o secret `UV_PUBLISH_TOKEN`) e cria a tag `vX.Y.Z` ? sem precisar mexer em vers?o na m?o.
+Todo merge/push para a `main` publica automaticamente no PyPI (workflow
+`Publish to PyPI`). Se a versão do `pyproject.toml` já existir no PyPI, o
+public é pulado para não falhar com versão duplicada.
+
+Para publicar uma versão nova, no GitHub acesse **Actions → Release → Run
+workflow** e escolha o tipo de bump (`patch`, `minor` ou `major`). O workflow
+bumpa a versão no `pyproject.toml` e `uv.lock`, envia para a `main` (o que
+dispara o publish automático) e cria a tag `vX.Y.Z` — sem precisar mexer em
+versão na mão.
 
 ## Licença
 
