@@ -21,7 +21,7 @@ jobs:
         run: uv sync
 
       - name: Check imports
-        run: uv run python -c "import conduto.cli, conduto.env_render, conduto.schemas_render, conduto.gerar_project"
+        run: uv run python -c "import conduto.cli, conduto.env.env_render, conduto.schemas.schemas_render, conduto.project_base.gerar_project"
 
       - name: Smoke test CLI
         run: uv run conduto --help
