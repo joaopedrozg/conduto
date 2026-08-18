@@ -328,6 +328,10 @@ uv build
 uv publish
 ```
 
+### Publicar uma vers?o nova (autom?tico)
+
+No GitHub, em **Actions ? Release ? Run workflow**, escolha o tipo de bump (`patch`, `minor` ou `major`). O workflow bumpa a vers?o no `pyproject.toml` e `uv.lock`, builda, publica no PyPI (usando o secret `UV_PUBLISH_TOKEN`) e cria a tag `vX.Y.Z` ? sem precisar mexer em vers?o na m?o.
+
 ## Licença
 
 MIT
