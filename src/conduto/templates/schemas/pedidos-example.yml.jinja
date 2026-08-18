@@ -1,6 +1,12 @@
 table: pedidos
 schema: public
 description: "Tabela transacional de pedidos"
+schedule:
+  cron: "0 * * * *"
+  mode: incremental
+  incremental_column: data_pedido
+  full_load: false
+  truncate: false
 columns:
   - name: id
     type: integer

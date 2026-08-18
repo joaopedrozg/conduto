@@ -1,6 +1,12 @@
 table: clientes
 schema: public
 description: "Tabela de cadastro de clientes"
+schedule:
+  cron: "0 * * * *"
+  mode: incremental
+  incremental_column: criado_em
+  full_load: false
+  truncate: false
 columns:
   - name: id
     type: integer

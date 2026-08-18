@@ -1,0 +1,260 @@
+"""Helpers ETL gerados pelo Conduto para o projeto {{ project_name }}.
+
+Este módulo lê o .env, o main.yml e os schemas/*.yml e executa as cargas
+seguindo as chaves de ``schedule`` de cada tabela:
+
+- ``cron``: frequência do schedule no Dagster (expressão cron)
+- ``mode``: ``incremental`` (usa ``incremental_column``) ou ``full`` (recarrega tudo)
+- ``incremental_column``: coluna usada como marcador de água (watermark)
+- ``full_load``: força uma carga completa mesmo no modo incremental
+- ``truncate``: limpa a tabela de destino antes de carregar
+
+Edite à vontade: o restante do pipeline lê este arquivo em tempo de execução.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence
+
+import yaml
+
+PROJETO_DIR = Path(__file__).resolve().parent.parent
+
+
+def ler_env() -> Dict[str, str]:
+    """Lê as credenciais do .env do projeto."""
+    caminho = PROJETO_DIR / ".env"
+    if not caminho.exists():
+        raise FileNotFoundError(f".env não encontrado em: {caminho}")
+    valores: Dict[str, str] = {}
+    for linha in caminho.read_text(encoding="utf-8").splitlines():
+        linha = linha.strip()
+        if not linha or linha.startswith("#") or "=" not in linha:
+            continue
+        chave, _, valor = linha.partition("=")
+        valores[chave.strip()] = valor.strip()
+    return valores
+
+
+def ler_tabelas() -> List[Dict[str, Any]]:
+    """Lê o main.yml e os schemas, devolvendo as tabelas na ordem de dependência."""
+    main_path = PROJETO_DIR / "main.yml"
+    if not main_path.exists():
+        return []
+    dados = yaml.safe_load(main_path.read_text(encoding="utf-8")) or {}
+    tabelas: List[Dict[str, Any]] = []
+    for item in dados.get("tables", []):
+        caminho = PROJETO_DIR / item["path"]
+        if not caminho.exists():
+            continue
+        tabela = yaml.safe_load(caminho.read_text(encoding="utf-8")) or {}
+        if not tabela.get("table"):
+            continue
+        tabela["path"] = item["path"]
+        tabelas.append(tabela)
+    nomes = {t["table"] for t in tabelas}
+    for tabela in tabelas:
+        tabela["deps"] = [d for d in _dependencias(tabela) if d in nomes]
+    return tabelas
+
+
+def _dependencias(tabela: Dict[str, Any]) -> List[str]:
+    """Colunas com FK viram dependências de assets (pais antes de filhos)."""
+    deps: List[str] = []
+    for coluna in tabela.get("columns", []):
+        fk = coluna.get("foreign_key")
+        if not fk:
+            continue
+        ref = fk.split("(", 1)[0].rsplit(".", 1)[-1]
+        if ref and ref != tabela["table"] and ref not in deps:
+            deps.append(ref)
+    return deps
+
+
+def ler_schedule_geral() -> Dict[str, Any]:
+    """Lê o schedule do modelo geral no main.yml."""
+    main_path = PROJETO_DIR / "main.yml"
+    if not main_path.exists():
+        return {}
+    dados = yaml.safe_load(main_path.read_text(encoding="utf-8")) or {}
+    return dados.get("schedule") or {}
+
+
+def conectar(tipo: str, host: str, porta: str, banco: str, usuario: str, senha: str):
+    """Abre uma conexão com o SGBD informado (postgresql, mysql ou sqlserver)."""
+    if tipo == "postgresql":
+        import psycopg
+        return psycopg.connect(
+            host=host, port=int(porta), dbname=banco, user=usuario, password=senha
+        )
+    if tipo == "mysql":
+        import pymysql
+        return pymysql.connect(
+            host=host, port=int(porta), database=banco, user=usuario, password=senha,
+            autocommit=True,
+        )
+    if tipo == "sqlserver":
+        import pyodbc
+        return pyodbc.connect(_conn_str_sqlserver(host, porta, banco, usuario, senha))
+    raise ValueError(f"SGBD não suportado: {tipo}")
+
+
+def _conn_str_sqlserver(host: str, porta: str, banco: str, usuario: str, senha: str) -> str:
+    import pyodbc
+    drivers = [d for d in pyodbc.drivers() if "ODBC Driver" in d]
+    if not drivers:
+        raise RuntimeError("Nenhum ODBC Driver for SQL Server instalado.")
+    driver = next((d for d in drivers if "18" in d), drivers[0])
+    driver_braces = "{" + driver + "}"
+    return (
+        f"DRIVER={driver_braces};SERVER={host},{porta};DATABASE={banco};"
+        f"UID={usuario};PWD={senha};TrustServerCertificate=yes"
+    )
+
+
+def _aspas(tipo: str, nome: str) -> str:
+    if tipo == "sqlserver":
+        return f"[{nome}]"
+    if tipo == "mysql":
+        return f"`{nome}`"
+    return f'"{nome}"'
+
+
+def _qualificado(tipo: str, schema: str, tabela: str) -> str:
+    return f"{_aspas(tipo, schema)}.{_aspas(tipo, tabela)}"
+
+
+def _placeholder(tipo: str) -> str:
+    return "?" if tipo == "sqlserver" else "%s"
+
+
+def _sql_amostra(tipo: str, origem: str) -> str:
+    """SELECT que não retorna linhas, usado apenas para descobrir as colunas."""
+    if tipo == "sqlserver":
+        return f"SELECT TOP (0) * FROM {origem}"
+    return f"SELECT * FROM {origem} LIMIT 0"
+
+
+def _colunas_origem(conn, tipo: str, origem: str) -> List[str]:
+    with conn.cursor() as cur:
+        cur.execute(_sql_amostra(tipo, origem))
+        return [descricao[0] for descricao in cur.description]
+
+
+def _executar(conn, sql: str, params: Optional[Sequence] = None) -> None:
+    with conn.cursor() as cur:
+        cur.execute(sql, params or ())
+    conn.commit()
+
+
+def _ler(conn, sql: str, params: Optional[Sequence] = None) -> List[Dict[str, Any]]:
+    with conn.cursor() as cur:
+        cur.execute(sql, params or ())
+        colunas = [descricao[0] for descricao in cur.description]
+        return [dict(zip(colunas, linha)) for linha in cur.fetchall()]
+
+
+def _ultimo_valor(conn, tipo: str, destino: str, coluna: str):
+    """Lê o último watermark gravado no destino (None se a tabela não existir)."""
+    sql = f"SELECT MAX({_aspas(tipo, coluna)}) FROM {destino}"
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            linha = cur.fetchone()
+            return linha[0] if linha else None
+    except Exception:
+        return None
+
+
+def _truncar(conn, tipo: str, destino: str) -> None:
+    """Limpa a tabela de destino (TRUNCATE com fallback para DELETE)."""
+    try:
+        _executar(conn, f"TRUNCATE TABLE {destino}")
+    except Exception:
+        _executar(conn, f"DELETE FROM {destino}")
+
+
+def _serializar(valor: Any) -> Any:
+    """Converte dicts/listas para JSON antes de gravar no banco."""
+    if isinstance(valor, (dict, list)):
+        return json.dumps(valor, ensure_ascii=False)
+    return valor
+
+
+def _inserir(conn, tipo: str, destino: str, colunas: List[str], registros) -> int:
+    if not registros:
+        return 0
+    nomes = [c for c in colunas if c in registros[0]]
+    if not nomes:
+        return 0
+    ph = ", ".join(_placeholder(tipo) for _ in nomes)
+    cols_sql = ", ".join(_aspas(tipo, c) for c in nomes)
+    sql = f"INSERT INTO {destino} ({cols_sql}) VALUES ({ph})"
+    valores = [tuple(_serializar(r[c]) for c in nomes) for r in registros]
+    with conn.cursor() as cur:
+        cur.executemany(sql, valores)
+    conn.commit()
+    return len(registros)
+
+
+def carregar_tabela(tabela: Dict[str, Any], context=None) -> int:
+    """Executa a carga de uma tabela seguindo as chaves de ``schedule`` do schema."""
+    env = ler_env()
+    tipo_origem = env["DB_ORIGEM_TYPE"]
+    tipo_destino = env["DB_DESTINO_TYPE"]
+    nome = tabela["table"]
+    schema_origem = env.get("DB_ORIGEM_SCHEMA") or "public"
+    schema_destino = tabela.get("schema") or env.get("DB_DESTINO_SCHEMA") or "public"
+
+    schedule = tabela.get("schedule") or {}
+    modo = schedule.get("mode", "full")
+    coluna_inc = schedule.get("incremental_column")
+    truncar = bool(schedule.get("truncate", False))
+    forcar_full = bool(schedule.get("full_load", False))
+
+    origem = _qualificado(tipo_origem, schema_origem, nome)
+    destino = _qualificado(tipo_destino, schema_destino, nome)
+
+    conn_origem = conectar(
+        tipo_origem,
+        env["DB_ORIGEM_HOST"], env["DB_ORIGEM_PORT"], env["DB_ORIGEM_NAME"],
+        env["DB_ORIGEM_USER"], env["DB_ORIGEM_PASSWORD"],
+    )
+    conn_destino = conectar(
+        tipo_destino,
+        env["DB_DESTINO_HOST"], env["DB_DESTINO_PORT"], env["DB_DESTINO_NAME"],
+        env["DB_DESTINO_USER"], env["DB_DESTINO_PASSWORD"],
+    )
+    try:
+        colunas = _colunas_origem(conn_origem, tipo_origem, origem)
+        if not colunas:
+            return 0
+
+        if truncar or modo == "full" or forcar_full:
+            _truncar(conn_destino, tipo_destino, destino)
+
+        if forcar_full or modo == "full" or not coluna_inc:
+            registros = _ler(conn_origem, f"SELECT * FROM {origem}")
+        else:
+            watermark = _ultimo_valor(conn_destino, tipo_destino, destino, coluna_inc)
+            if watermark is None:
+                registros = _ler(conn_origem, f"SELECT * FROM {origem}")
+            else:
+                ph = _placeholder(tipo_origem)
+                sql = (
+                    f"SELECT * FROM {origem} "
+                    f"WHERE {_aspas(tipo_origem, coluna_inc)} > {ph} "
+                    f"ORDER BY {_aspas(tipo_origem, coluna_inc)}"
+                )
+                registros = _ler(conn_origem, sql, [watermark])
+
+        inseridos = _inserir(conn_destino, tipo_destino, destino, colunas, registros)
+        if context is not None:
+            tipo_carga = "full" if (forcar_full or modo == "full" or not coluna_inc) else "incremental"
+            context.log.info(f"Tabela {nome}: {inseridos} linha(s) carregada(s) ({tipo_carga}).")
+        return inseridos
+    finally:
+        conn_origem.close()
+        conn_destino.close()

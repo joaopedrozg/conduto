@@ -1,6 +1,10 @@
 version: "1.0"
 project: {{ project_name }}
 
+# Schedule do modelo geral (todas as tabelas, na ordem de dependência)
+schedule:
+  cron: "0 * * * *"
+
 # Lista de tabelas na ordem correta de dependência (ex: clientes antes de pedidos)
 tables:
   - path: "schemas/clientes.yml"

@@ -1,6 +1,11 @@
 table: produtos
 schema: public
 description: "Tabela de catálogo de produtos"
+schedule:
+  cron: "0 * * * *"
+  mode: full
+  full_load: false
+  truncate: false
 columns:
   - name: id
     type: integer

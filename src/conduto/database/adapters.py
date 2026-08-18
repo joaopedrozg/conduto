@@ -52,6 +52,53 @@ ADAPTERS: Dict[str, Adapter] = {
 }
 
 
+def conectar_postgres(credenciais: dict, database: str | None = None):
+    import psycopg
+
+    return psycopg.connect(
+        host=credenciais["host"],
+        port=int(credenciais["port"]),
+        dbname=database or credenciais.get("database") or "postgres",
+        user=credenciais["user"],
+        password=credenciais["password"],
+        connect_timeout=5,
+    )
+
+
+def conectar_mysql(credenciais: dict, database: str | None = None):
+    import pymysql
+
+    return pymysql.connect(
+        host=credenciais["host"],
+        port=int(credenciais["port"]),
+        database=database or credenciais.get("database"),
+        user=credenciais["user"],
+        password=credenciais["password"],
+        connect_timeout=5,
+    )
+
+
+def conectar_sqlserver(credenciais: dict, database: str | None = None):
+    import pyodbc
+
+    opcoes = [
+        "ODBC Driver 18 for SQL Server",
+        "ODBC Driver 17 for SQL Server",
+        "ODBC Driver 13 for SQL Server",
+    ]
+    driver = next((d for d in opcoes if d in pyodbc.drivers()), None)
+    if driver is None:
+        raise RuntimeError(
+            "Nenhum driver ODBC do SQL Server instalado. "
+            "Instale: " + " ou ".join(opcoes)
+        )
+    return pyodbc.connect(
+        f"DRIVER={{{driver}}};SERVER={credenciais['host']},{credenciais['port']};"
+        f"DATABASE={database or credenciais.get('database') or 'master'};UID={credenciais['user']};"
+        f"PWD={credenciais['password']};TrustServerCertificate=yes;Connection Timeout=5"
+    )
+
+
 def testar_conexao(adapter: Adapter, credenciais: dict) -> Tuple[bool, str]:
     if adapter.tipo == "postgresql":
         return _testar_postgres(credenciais)
@@ -79,16 +126,7 @@ def instalar_driver_sqlserver() -> Tuple[bool, str]:
 
 def _testar_postgres(credenciais: dict) -> Tuple[bool, str]:
     try:
-        import psycopg
-
-        conn = psycopg.connect(
-            host=credenciais["host"],
-            port=int(credenciais["port"]),
-            dbname=credenciais["database"],
-            user=credenciais["user"],
-            password=credenciais["password"],
-            connect_timeout=5,
-        )
+        conn = conectar_postgres(credenciais)
         conn.close()
         return True, "ok"
     except Exception as erro:
@@ -100,16 +138,7 @@ def _testar_postgres(credenciais: dict) -> Tuple[bool, str]:
 
 def _testar_mysql(credenciais: dict) -> Tuple[bool, str]:
     try:
-        import pymysql
-
-        conn = pymysql.connect(
-            host=credenciais["host"],
-            port=int(credenciais["port"]),
-            database=credenciais["database"],
-            user=credenciais["user"],
-            password=credenciais["password"],
-            connect_timeout=5,
-        )
+        conn = conectar_mysql(credenciais)
         conn.close()
         return True, "ok"
     except Exception as erro:
@@ -121,24 +150,7 @@ def _testar_mysql(credenciais: dict) -> Tuple[bool, str]:
 
 def _testar_sqlserver(credenciais: dict) -> Tuple[bool, str]:
     try:
-        import pyodbc
-
-        opcoes = [
-            "ODBC Driver 18 for SQL Server",
-            "ODBC Driver 17 for SQL Server",
-            "ODBC Driver 13 for SQL Server",
-        ]
-        driver = next((d for d in opcoes if d in pyodbc.drivers()), None)
-        if driver is None:
-            return False, (
-                "Nenhum driver ODBC do SQL Server instalado. "
-                "Instale: " + " ou ".join(opcoes)
-            )
-        conn = pyodbc.connect(
-            f"DRIVER={{{driver}}};SERVER={credenciais['host']},{credenciais['port']};"
-            f"DATABASE={credenciais['database']};UID={credenciais['user']};"
-            f"PWD={credenciais['password']};TrustServerCertificate=yes;Connection Timeout=5"
-        )
+        conn = conectar_sqlserver(credenciais)
         conn.close()
         return True, "ok"
     except Exception as erro:

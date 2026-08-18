@@ -7,8 +7,8 @@ console = Console()
 
 
 def schemas_render(project_dir, context):
-    base_dir = Path(__file__).resolve().parent
-    templates_dir = base_dir / "templates" / "schemas"
+    package_dir = Path(__file__).resolve().parent.parent
+    templates_dir = package_dir / "templates" / "schemas"
     target_dir = Path(project_dir)
     schemas_dir = target_dir / "schemas"
     schemas_dir.mkdir(parents=True, exist_ok=True)

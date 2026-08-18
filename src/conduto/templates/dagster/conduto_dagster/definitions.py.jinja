@@ -1,0 +1,92 @@
+"""Definições Dagster geradas pelo Conduto para o projeto {{ project_name }}.
+
+Os assets e schedules são montados dinamicamente a partir do main.yml e dos
+schemas/*.yml: altere a chave ``schedule`` de cada schema (cron, mode,
+incremental_column, full_load, truncate) que o Dagster passa a seguir
+automaticamente no próximo reload.
+
+Para rodar: `uv run dagster dev` na raiz do projeto.
+"""
+
+import re
+
+from dagster import (
+    AssetKey,
+    AssetSelection,
+    Definitions,
+    ScheduleDefinition,
+    asset,
+    define_asset_job,
+)
+
+from .etl import carregar_tabela, ler_schedule_geral, ler_tabelas
+
+TABELAS = ler_tabelas()
+GERAL = ler_schedule_geral()
+
+
+def _nome_seguro(nome: str) -> str:
+    """Converte o nome da tabela em um identificador seguro para jobs/schedules."""
+    return re.sub(r"[^0-9a-zA-Z_]", "_", nome).lower() or "tabela"
+
+
+def _criar_asset(tabela):
+    """Cria um asset Dagster para a tabela, respeitando as dependências (FKs)."""
+    nome = tabela["table"]
+    deps = [AssetKey(d) for d in tabela.get("deps", [])]
+
+    @asset(name=nome, group_name="conduto", deps=deps, description=tabela.get("description", ""))
+    def _asset(context):
+        tabela_atual = next(t for t in TABELAS if t["table"] == nome)
+        return carregar_tabela(tabela_atual, context)
+
+    return _asset
+
+
+ASSETS = [_criar_asset(t) for t in TABELAS]
+
+
+def _criar_schedule(tabela):
+    """Cria o ScheduleDefinition da tabela seguindo a chave ``schedule`` do schema."""
+    schedule = tabela.get("schedule") or {}
+    nome = _nome_seguro(tabela["table"])
+    job = define_asset_job(
+        f"job_{nome}",
+        selection=AssetSelection.assets(AssetKey(tabela["table"])),
+    )
+    return ScheduleDefinition(
+        name=f"schedule_{nome}",
+        job=job,
+        cron_schedule=schedule.get("cron", "0 * * * *"),
+    )
+
+
+SCHEDULES = [_criar_schedule(t) for t in TABELAS]
+
+
+@asset(
+    name="modelo_geral",
+    group_name="conduto",
+    deps=[AssetKey(t["table"]) for t in TABELAS],
+    description="Pipeline geral: executa todas as tabelas na ordem de dependência.",
+)
+def modelo_geral(context):
+    """Executa o modelo geral (todas as tabelas, na ordem do main.yml)."""
+    context.log.info(f"Modelo geral: {len(TABELAS)} tabela(s) executada(s).")
+
+
+JOB_GERAL = define_asset_job(
+    "job_modelo_geral",
+    selection=AssetSelection.assets(AssetKey("modelo_geral")),
+)
+
+SCHEDULE_GERAL = ScheduleDefinition(
+    name="schedule_modelo_geral",
+    job=JOB_GERAL,
+    cron_schedule=GERAL.get("cron", "0 * * * *"),
+)
+
+defs = Definitions(
+    assets=[*ASSETS, modelo_geral],
+    schedules=[*SCHEDULES, SCHEDULE_GERAL],
+)

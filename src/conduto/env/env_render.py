@@ -8,8 +8,8 @@ from rich.console import Console
 console = Console()
 
 def env_render(context, output_dir=None):
-    base_dir = Path(__file__).resolve().parent
-    template_path = base_dir / "templates" / "env" / "env-example.jinja"
+    package_dir = Path(__file__).resolve().parent.parent
+    template_path = package_dir / "templates" / "env" / "env-example.jinja"
 
     if not template_path.exists():
         console.print(
