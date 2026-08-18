@@ -22,3 +22,6 @@ wheels/
 .mypy_cache/
 .coverage
 htmlcov/
+
+# Projetos de teste locais (scratch)
+teste/

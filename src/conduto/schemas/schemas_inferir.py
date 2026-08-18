@@ -4,16 +4,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
-from rich.console import Console
-from rich.table import Table
-from rich.text import Text
 
 from conduto.database.adapters import ADAPTERS
 from conduto.database.admin import schema_padrao_sgbd
 from conduto.database.introspect import descrever_tabela
 from conduto.ddl.ddl_render import ler_env
-
-console = Console()
+from conduto.ui import aviso, console, erro, progresso, tabela
 
 ORDEM_SCHEMA = ["table", "schema", "description", "schedule"]
 ORDEM_MAIN = ["version", "project", "schedule"]
@@ -118,18 +114,16 @@ def _registrar_no_main(project_dir: Path, caminho: str) -> None:
 
 
 def _mostrar_resumo(inferidas: List[Dict[str, Any]]) -> None:
-    tabela = Table(
-        title="Colunas inferidas",
-        border_style="dim blue",
-        header_style="bold cyan",
-        pad_edge=False,
+    grade = tabela(
+        "Colunas inferidas",
+        [
+            ("Tabela", "titulo"),
+            ("Colunas", "sucesso"),
+            ("Arquivo", "detalhe"),
+        ],
+        ((item["table"], str(item["columns"]), item["path"]) for item in inferidas),
     )
-    tabela.add_column("Tabela", style="bold white", no_wrap=True, min_width=16)
-    tabela.add_column("Colunas", style="green")
-    tabela.add_column("Arquivo", style="yellow")
-    for t in inferidas:
-        tabela.add_row(t["table"], str(t["columns"]), t["path"])
-    console.print(tabela)
+    console.print(grade)
 
 
 def inferir_colunas(project_dir: Path, tabela_alvo: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -147,39 +141,41 @@ def inferir_colunas(project_dir: Path, tabela_alvo: Optional[str] = None) -> Lis
 
     alvos = _candidatas(project_dir, tabela_alvo)
     if not alvos:
-        console.print(Text("Nenhum schema sem colunas encontrado.", style="bold yellow"))
+        console.print(aviso("Nenhum schema sem colunas encontrado."))
         return []
 
     inferidas: List[Dict[str, Any]] = []
-    for alvo in alvos:
-        nome = alvo["table"]
-        try:
-            descricao = descrever_tabela(adapter, credenciais, schema_origem, nome)
-        except Exception as erro:
-            console.print(Text(f"Falha ao inferir {nome}: {erro}", style="bold red"))
-            continue
-        if not descricao.get("columns"):
-            console.print(Text(
-                f"Tabela {nome} nao retornou colunas; pulando.", style="bold yellow"
-            ))
-            continue
+    with progresso(len(alvos), "Inferindo colunas das tabelas...") as (barra, tarefa):
+        for alvo in alvos:
+            nome = alvo["table"]
+            try:
+                descricao = descrever_tabela(adapter, credenciais, schema_origem, nome)
+            except Exception as exc:
+                console.print(erro("Falha ao inferir {nome}: {erro}", nome=nome, erro=exc))
+                barra.advance(tarefa)
+                continue
+            if not descricao.get("columns"):
+                console.print(aviso("Tabela {nome} nao retornou colunas; pulando.", nome=nome))
+                barra.advance(tarefa)
+                continue
 
-        dados = dict(alvo["dados"] or {})
-        dados["table"] = descricao["table"]
-        dados["schema"] = dados.get("schema") or schema_destino
-        dados["description"] = dados.get("description") or f"Tabela {nome}"
-        dados["columns"] = descricao["columns"]
-        dados = _reordenar(dados, ORDEM_SCHEMA)
+            dados = dict(alvo["dados"] or {})
+            dados["table"] = descricao["table"]
+            dados["schema"] = dados.get("schema") or schema_destino
+            dados["description"] = dados.get("description") or f"Tabela {nome}"
+            dados["columns"] = descricao["columns"]
+            dados = _reordenar(dados, ORDEM_SCHEMA)
 
-        caminho = project_dir / alvo["path"]
-        caminho.parent.mkdir(parents=True, exist_ok=True)
-        caminho.write_text(_dump_yaml(dados), encoding="utf-8")
-        _registrar_no_main(project_dir, alvo["path"])
-        inferidas.append({
-            "table": nome,
-            "path": alvo["path"],
-            "columns": len(dados["columns"]),
-        })
+            caminho = project_dir / alvo["path"]
+            caminho.parent.mkdir(parents=True, exist_ok=True)
+            caminho.write_text(_dump_yaml(dados), encoding="utf-8")
+            _registrar_no_main(project_dir, alvo["path"])
+            inferidas.append({
+                "table": nome,
+                "path": alvo["path"],
+                "columns": len(dados["columns"]),
+            })
+            barra.advance(tarefa)
 
     if inferidas:
         _mostrar_resumo(inferidas)

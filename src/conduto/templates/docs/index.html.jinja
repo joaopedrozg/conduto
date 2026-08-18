@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ projeto.nome }} — Documentação</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg2: #161b22;
+    --bg3: #1c2330;
+    --borda: #2d3748;
+    --texto: #dbe4f0;
+    --texto2: #9fb0c3;
+    --ciano: #38bdf8;
+    --verde: #34d399;
+    --amarelo: #fbbf24;
+    --laranja: #fb923c;
+    --roxo: #a78bfa;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--texto);
+    line-height: 1.55;
+  }
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: 280px;
+    background: var(--bg2);
+    border-right: 1px solid var(--borda);
+    padding: 20px 16px;
+    overflow-y: auto;
+    z-index: 10;
+  }
+  .brand { font-size: 20px; font-weight: 800; letter-spacing: .5px; margin-bottom: 4px; }
+  .brand small { color: var(--ciano); font-weight: 600; }
+  .brand-desc { color: var(--texto2); font-size: 12px; margin-bottom: 14px; }
+  nav a {
+    display: block;
+    color: var(--texto2);
+    text-decoration: none;
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-size: 14px;
+    border-left: 3px solid transparent;
+  }
+  nav a:hover { color: var(--texto); background: var(--bg3); }
+  nav a.ativo { color: var(--ciano); border-left-color: var(--ciano); background: var(--bg3); }
+  nav a.sub { padding-left: 26px; font-size: 13px; }
+  .busca {
+    width: 100%;
+    margin: 10px 0 6px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--borda);
+    background: var(--bg);
+    color: var(--texto);
+    font-size: 13px;
+  }
+  .sidebar .rodape {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid var(--borda);
+    color: var(--texto2);
+    font-size: 12px;
+  }
+  main { margin-left: 280px; padding: 32px 44px 80px; max-width: 1100px; }
+  section { margin-bottom: 56px; scroll-margin-top: 24px; }
+  h1 { font-size: 30px; margin: 0 0 6px; }
+  h2 {
+    font-size: 22px;
+    margin: 0 0 14px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--borda);
+    color: var(--ciano);
+  }
+  h3 { font-size: 17px; margin: 26px 0 10px; color: var(--texto); }
+  p { color: var(--texto2); }
+  a { color: var(--ciano); }
+  code {
+    font-family: "Cascadia Code", Consolas, monospace;
+    background: var(--bg3);
+    padding: 1px 6px;
+    border-radius: 6px;
+    font-size: 13px;
+  }
+  pre {
+    position: relative;
+    background: var(--bg2);
+    border: 1px solid var(--borda);
+    border-radius: 10px;
+    padding: 16px;
+    overflow-x: auto;
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; }
+  .copiar {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: var(--bg3);
+    color: var(--texto2);
+    border: 1px solid var(--borda);
+    border-radius: 6px;
+    padding: 3px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .copiar:hover { color: var(--texto); }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+  th, td {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--borda);
+    font-size: 14px;
+    vertical-align: top;
+  }
+  th {
+    color: var(--texto2);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 12px;
+    letter-spacing: .4px;
+  }
+  tr:hover td { background: var(--bg3); }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .3px;
+    margin-right: 4px;
+    white-space: nowrap;
+  }
+  .pk { background: rgba(52, 211, 153, .15); color: var(--verde); }
+  .fk { background: rgba(56, 189, 248, .15); color: var(--ciano); }
+  .uni { background: rgba(167, 139, 250, .15); color: var(--roxo); }
+  .nn { background: rgba(251, 191, 36, .15); color: var(--amarelo); }
+  .def { background: rgba(251, 146, 60, .15); color: var(--laranja); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin: 16px 0; }
+  .card {
+    background: var(--bg2);
+    border: 1px solid var(--borda);
+    border-radius: 12px;
+    padding: 16px;
+  }
+  .card .rotulo { color: var(--texto2); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
+  .card .valor { font-size: 22px; font-weight: 700; margin-top: 4px; }
+  .card .meta { margin: 6px 0 0; }
+  .conexao { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+  .arvore ul { list-style: none; padding-left: 18px; margin: 2px 0; }
+  .arvore > ul { padding-left: 0; }
+  .pasta { color: var(--amarelo); font-weight: 600; }
+  .arquivo { color: var(--texto2); }
+  .arvore li { padding: 1px 0; font-size: 14px; }
+  .aviso {
+    border: 1px dashed var(--borda);
+    border-radius: 10px;
+    padding: 14px 16px;
+    color: var(--texto2);
+    font-size: 14px;
+  }
+  .tabela-card {
+    background: var(--bg2);
+    border: 1px solid var(--borda);
+    border-radius: 12px;
+    padding: 18px;
+    margin: 16px 0;
+    scroll-margin-top: 24px;
+  }
+  .tabela-titulo { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .tabela-titulo h3 { margin: 0; color: var(--texto); }
+  .schema { color: var(--texto2); font-size: 13px; }
+  .meta { color: var(--texto2); font-size: 13px; margin: 6px 0 0; }
+  .subtitulo { color: var(--texto2); margin: 0 0 6px; }
+  @media (max-width: 860px) {
+    .sidebar {
+      position: static;
+      width: 100%;
+      height: auto;
+      border-right: none;
+      border-bottom: 1px solid var(--borda);
+    }
+    main { margin-left: 0; padding: 24px 18px 60px; }
+  }
+</style>
+</head>
+<body>
+{% macro arvore_nodos(nodos) -%}
+<ul class="arvore">
+{%- for nodo in nodos %}
+  <li>
+    {%- if nodo.tipo == 'dir' %}
+    <span class="pasta">📁 {{ nodo.nome }}</span>
+    {%- else %}
+    <span class="arquivo">📄 {{ nodo.nome }}</span>
+    {%- endif %}
+    {%- if nodo.filhos %}
+    {{ arvore_nodos(nodo.filhos) }}
+    {%- endif %}
+  </li>
+{%- endfor %}
+</ul>
+{%- endmacro %}
+
+<aside class="sidebar">
+  <div class="brand">{{ projeto.nome }} <small>docs</small></div>
+  <div class="brand-desc">Documentação da estrutura do projeto</div>
+  {% if tabelas %}
+  <input id="busca" class="busca" type="search" placeholder="Buscar tabelas..." autocomplete="off">
+  {% endif %}
+  <nav>
+    <a href="#visao-geral">Visão geral</a>
+    <a href="#estrutura">Estrutura de arquivos</a>
+    <a href="#conexoes">Conexões</a>
+    <a href="#tabelas">Tabelas ({{ tabelas|length }})</a>
+    {% for t in tabelas %}
+    <a class="sub" href="#tabela-{{ t.slug }}" data-nome="{{ t.table|lower }}">{{ t.table }}</a>
+    {% endfor %}
+    <a href="#schedules">Schedules</a>
+    <a href="#ddl">DDL</a>
+    <a href="#ambiente">Ambiente</a>
+    <a href="#comandos">Comandos</a>
+  </nav>
+  <div class="rodape">conduto &middot; {{ projeto.versao }}</div>
+</aside>
+
+<main>
+  <section id="visao-geral">
+    <h1>{{ projeto.nome }}</h1>
+    <p class="meta">{{ projeto.pasta }}</p>
+    {% if projeto.descricao %}<p>{{ projeto.descricao }}</p>{% endif %}
+
+    <div class="cards">
+      <div class="card"><div class="rotulo">Versão</div><div class="valor">{{ projeto.versao }}</div></div>
+      <div class="card"><div class="rotulo">Tabelas</div><div class="valor">{{ tabelas|length }}</div></div>
+      <div class="card"><div class="rotulo">Colunas</div><div class="valor">{{ total_colunas }}</div></div>
+      {% if conexoes.origem %}
+      <div class="card"><div class="rotulo">Origem</div><div class="valor">{{ conexoes.origem.nome }}</div></div>
+      {% endif %}
+      {% if conexoes.destino %}
+      <div class="card"><div class="rotulo">Destino</div><div class="valor">{{ conexoes.destino.nome }}</div></div>
+      {% endif %}
+      {% if projeto.requer_python %}
+      <div class="card"><div class="rotulo">Python</div><div class="valor">{{ projeto.requer_python }}</div></div>
+      {% endif %}
+    </div>
+
+    {% if readme %}
+    <h2>README</h2>
+    <pre>{{ readme }}</pre>
+    {% endif %}
+  </section>
+
+  <section id="estrutura">
+    <h2>Estrutura de arquivos</h2>
+    <p>Visão dos arquivos do projeto. Pastas de cache, build e segredos são omitidas.</p>
+    {% if arvore.filhos %}
+    <div class="arvore">{{ arvore_nodos(arvore.filhos) }}</div>
+    {% else %}
+    <div class="aviso">Nenhum arquivo encontrado.</div>
+    {% endif %}
+  </section>
+
+  <section id="conexoes">
+    <h2>Conexões</h2>
+    {% if conexoes.origem or conexoes.destino %}
+    <div class="conexao">
+      {% if conexoes.origem %}
+      <div class="card">
+        <div class="rotulo">Origem</div>
+        <div class="valor">{{ conexoes.origem.nome }}</div>
+        <p class="meta">
+          {{ conexoes.origem.host }}:{{ conexoes.origem.port }}<br>
+          banco: <code>{{ conexoes.origem.database }}</code> &middot; schema: <code>{{ conexoes.origem.schema or "—" }}</code><br>
+          usuário: <code>{{ conexoes.origem.user or "—" }}</code> &middot; senha:
+          {%- if conexoes.origem.senha_definida %} <code>&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;</code>
+          {%- else %} —{% endif %}
+        </p>
+      </div>
+      {% endif %}
+      {% if conexoes.destino %}
+      <div class="card">
+        <div class="rotulo">Destino</div>
+        <div class="valor">{{ conexoes.destino.nome }}</div>
+        <p class="meta">
+          {{ conexoes.destino.host }}:{{ conexoes.destino.port }}<br>
+          banco: <code>{{ conexoes.destino.database }}</code> &middot; schema: <code>{{ conexoes.destino.schema or "—" }}</code><br>
+          usuário: <code>{{ conexoes.destino.user or "—" }}</code> &middot; senha:
+          {%- if conexoes.destino.senha_definida %} <code>&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;</code>
+          {%- else %} —{% endif %}
+        </p>
+      </div>
+      {% endif %}
+    </div>
+    {% else %}
+    <div class="aviso">Nenhum <code>.env</code> encontrado. Rode <code>conduto init</code> para gerar as credenciais.</div>
+    {% endif %}
+
+    {% if env %}
+    <h3>Variáveis de ambiente (<code>.env</code>)</h3>
+    <p class="subtitulo">Valores sensíveis (senhas, tokens) são exibidos mascarados.</p>
+    <table>
+      <thead><tr><th>Variável</th><th>Valor</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for v in env %}
+        <tr>
+          <td><code>{{ v.chave }}</code></td>
+          <td>{% if v.sensivel %}<code>{{ v.valor }}</code>{% else %}{{ v.valor or "—" }}{% endif %}</td>
+          <td>{% if v.definida %}<span class="badge nn">definida</span>{% else %}<span class="badge def">vazia</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+
+  <section id="tabelas">
+    <h2>Tabelas</h2>
+    {% if tabelas %}
+    <p>Resumo das {{ tabelas|length }} tabela(s) declaradas no <code>main.yml</code>.</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Tabela</th><th>Schema</th><th>Colunas</th><th>Chave primária</th><th>FK</th><th>Cron</th><th>Modo</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for t in tabelas %}
+        <tr>
+          <td><a href="#tabela-{{ t.slug }}"><code>{{ t.table }}</code></a></td>
+          <td>{{ t.schema or "—" }}</td>
+          <td>{{ t.qtd_colunas }}</td>
+          <td>{{ t.chaves_primarias|join(", ") or "—" }}</td>
+          <td>{% if t.chaves_estrangeiras %}{{ t.chaves_estrangeiras|length }}{% else %}—{% endif %}</td>
+          <td>{{ t.schedule.cron or "—" }}</td>
+          <td>{{ t.schedule.mode or "—" }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+
+    {% for t in tabelas %}
+    <div class="tabela-card" id="tabela-{{ t.slug }}" data-nome="{{ t.table|lower }}">
+      <div class="tabela-titulo">
+        <h3>{{ t.table }}</h3>
+        <span class="schema">schema: {{ t.schema or "—" }}</span>
+        {% if t.schedule.cron %}<span class="badge def">{{ t.schedule.cron }}</span>{% endif %}
+        {% if t.schedule.mode %}<span class="badge nn">{{ t.schedule.mode }}</span>{% endif %}
+      </div>
+      {% if t.description %}<p class="meta">{{ t.description }}</p>{% endif %}
+      <p class="meta">
+        {%- if t.chaves_primarias %}PK: {{ t.chaves_primarias|join(", ") }}{% else %}Sem PK{% endif %}
+        {%- if t.chaves_estrangeiras %} &middot; FK: {{ t.chaves_estrangeiras|map(attribute="name")|join(", ") }}{% endif %}
+        {%- if t.unicas %} &middot; UNIQUE: {{ t.unicas|join(", ") }}{% endif %}
+      </p>
+
+      <h3>Colunas ({{ t.qtd_colunas }})</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Coluna</th><th>Tipo</th><th>Restrições</th><th>Default</th><th>Foreign key</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for c in t.colunas %}
+          <tr>
+            <td><code>{{ c.name }}</code></td>
+            <td><code>{{ c.type }}</code></td>
+            <td>
+              {% if c.chave_primaria %}<span class="badge pk">PK</span>{% endif %}
+              {% if c.unica %}<span class="badge uni">UNIQUE</span>{% endif %}
+              {% if c.nao_nula %}<span class="badge nn">NOT NULL</span>{% endif %}
+            </td>
+            <td>{% if c.default %}<code>{{ c.default }}</code>{% else %}—{% endif %}</td>
+            <td>{% if c.fk_tabela %}<code>{{ c.fk_tabela }}({{ c.fk_coluna }})</code>{% else %}—{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+
+      <h3>YAML</h3>
+      <pre><code>{{ t.yaml }}</code></pre>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="aviso">Nenhum schema encontrado. Rode <code>conduto init</code> (ou <code>conduto schedules</code>) para gerar <code>main.yml</code> e <code>schemas/*.yml</code>.</div>
+    {% endif %}
+  </section>
+
+  <section id="schedules">
+    <h2>Schedules</h2>
+    {% if schedules.geral %}
+    <div class="cards">
+      <div class="card">
+        <div class="rotulo">Schedule geral</div>
+        <div class="valor">{{ schedules.geral.cron or "—" }}</div>
+      </div>
+    </div>
+    {% endif %}
+    {% if schedules.tabelas %}
+    <table>
+      <thead>
+        <tr>
+          <th>Tabela</th><th>Cron</th><th>Modo</th><th>Coluna incremental</th><th>Full load</th><th>Truncate</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for s in schedules.tabelas %}
+        <tr>
+          <td><a href="#tabela-{{ s.slug }}"><code>{{ s.tabela }}</code></a></td>
+          <td>{{ s.cron or "—" }}</td>
+          <td>{{ s.mode or "—" }}</td>
+          <td>{{ s.incremental_column or "—" }}</td>
+          <td>{% if s.full_load %}sim{% else %}não{% endif %}</td>
+          <td>{% if s.truncate %}sim{% else %}não{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="aviso">Nenhum schedule declarado. Rode <code>conduto schedules</code> para gerar os schedules padrão.</div>
+    {% endif %}
+  </section>
+
+  <section id="ddl">
+    <h2>DDL</h2>
+    {% if ddl %}
+    <p class="subtitulo">DDL gerado para o destino <strong>{{ ddl.tipo }}</strong>. Use <code>conduto ddl</code> para gerar ou aplicar no banco.</p>
+    <pre><code>{{ ddl.texto }}</code></pre>
+    {% else %}
+    <div class="aviso">Não foi possível gerar o DDL: o <code>.env</code> com o tipo de destino ou os schemas não estão disponíveis.</div>
+    {% endif %}
+  </section>
+
+  <section id="ambiente">
+    <h2>Ambiente</h2>
+    {% if dependencias %}
+    <h3>Dependências principais</h3>
+    <table>
+      <thead><tr><th>Pacote</th></tr></thead>
+      <tbody>
+      {% for d in dependencias %}
+        <tr><td><code>{{ d }}</code></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {% if opcionais %}
+    <h3>Dependências opcionais</h3>
+    {% for grupo, itens in opcionais.items() %}
+      <p class="meta"><strong>{{ grupo }}</strong></p>
+      <ul class="arvore">
+        {% for item in itens %}
+        <li><code>{{ item }}</code></li>
+        {% endfor %}
+      </ul>
+    {% endfor %}
+    {% endif %}
+    {% if not dependencias and not opcionais %}
+    <div class="aviso">Nenhum <code>pyproject.toml</code> encontrado no projeto.</div>
+    {% endif %}
+  </section>
+
+  <section id="comandos">
+    <h2>Comandos</h2>
+    <table>
+      <thead><tr><th>Comando</th><th>Descrição</th></tr></thead>
+      <tbody>
+      {% for comando, descricao in comandos %}
+        <tr><td><code>{{ comando }}</code></td><td>{{ descricao }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</main>
+
+<script>
+(function () {
+  var busca = document.getElementById('busca');
+  if (busca) {
+    busca.addEventListener('input', function () {
+      var termo = busca.value.trim().toLowerCase();
+      document.querySelectorAll('#tabelas .tabela-card').forEach(function (card) {
+        card.style.display = card.getAttribute('data-nome').indexOf(termo) >= 0 ? '' : 'none';
+      });
+      document.querySelectorAll('.sidebar nav a.sub').forEach(function (link) {
+        link.style.display = link.getAttribute('data-nome').indexOf(termo) >= 0 ? '' : 'none';
+      });
+    });
+  }
+
+  var secoes = document.querySelectorAll('main section[id]');
+  var links = document.querySelectorAll('.sidebar nav a');
+  var observador = new IntersectionObserver(function (entradas) {
+    entradas.forEach(function (entrada) {
+      if (entrada.isIntersecting) {
+        links.forEach(function (link) {
+          link.classList.toggle('ativo', link.getAttribute('href') === '#' + entrada.target.id);
+        });
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  secoes.forEach(function (secao) { observador.observe(secao); });
+
+  document.querySelectorAll('pre').forEach(function (pre) {
+    var botao = document.createElement('button');
+    botao.className = 'copiar';
+    botao.textContent = 'Copiar';
+    botao.addEventListener('click', function () {
+      var alvo = pre.querySelector('code') || pre;
+      navigator.clipboard.writeText(alvo.innerText).then(function () {
+        botao.textContent = 'Copiado!';
+        setTimeout(function () { botao.textContent = 'Copiar'; }, 1500);
+      });
+    });
+    pre.appendChild(botao);
+  });
+})();
+</script>
+</body>
+</html>
