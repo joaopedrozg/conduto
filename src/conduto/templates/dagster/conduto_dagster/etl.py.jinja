@@ -354,7 +354,7 @@ def _executar(conn, sql: str, params: Optional[Sequence] = None) -> None:
 
 
 _FIM = object()
-_LOTE = 2000
+_LOTE = 20000
 
 
 def _produtor(conn, sql: str, params: Optional[Sequence], fila, lote: int = _LOTE) -> None:
@@ -465,6 +465,8 @@ def _copiar(conn, tipo: str, destino: str, fila, context=None) -> int:
     """
     if tipo == "clickhouse":
         return _copiar_clickhouse(conn, destino, fila, context)
+    if tipo == "duckdb":
+        return _copiar_duckdb(conn, destino, fila, context)
     if tipo == "deltalake":
         return _copiar_delta(conn, destino, fila, context)
     primeiro = fila.get()
@@ -520,6 +522,44 @@ def _copiar(conn, tipo: str, destino: str, fila, context=None) -> int:
                 conn.commit()
                 if context is not None and total % 20000 == 0:
                     context.log.info(f"Inseridas {total} linha(s) em {destino}.")
+    conn.commit()
+    return total
+
+
+def _copiar_duckdb(conn, destino: str, fila, context=None) -> int:
+    """Grava os lotes no DuckDB via Arrow (INSERT SELECT de tabela registrada).
+
+    O executemany do DuckDB insere 1 linha por vez; registrar a tabela Arrow e
+    usar INSERT SELECT e ordens de grandeza mais rapido.
+    """
+    import pyarrow as pa
+
+    primeiro = fila.get()
+    if isinstance(primeiro, Exception):
+        raise primeiro
+    colunas = list(primeiro)
+    if not colunas:
+        return 0
+    total = 0
+    while True:
+        item = fila.get()
+        if item is _FIM:
+            break
+        if isinstance(item, Exception):
+            raise item
+        linhas = [tuple(_serializar(v) for v in linha) for linha in item]
+        if linhas:
+            tabela = pa.Table.from_pylist(
+                [dict(zip(colunas, linha)) for linha in linhas]
+            )
+            conn.register("_lote_conduto", tabela)
+            try:
+                conn.execute(f"INSERT INTO {destino} SELECT * FROM _lote_conduto")
+            finally:
+                conn.unregister("_lote_conduto")
+            total += len(linhas)
+            if context is not None and total % 20000 == 0:
+                context.log.info(f"Inseridas {total} linha(s) em {destino}.")
     conn.commit()
     return total
 
@@ -641,13 +681,14 @@ def carregar_tabela(tabela: Dict[str, Any], context=None) -> int:
                 params = [watermark]
 
         inicio = time.monotonic()
+        lote = int(env.get("CONDUTO_LOTE") or _LOTE)
         fila = queue.Queue(maxsize=8)
         if tipo_origem == "deltalake":
             alvo_produtor = _produtor_delta
-            args_produtor = (conn_origem, nome, fila)
+            args_produtor = (conn_origem, nome, fila, lote)
         else:
             alvo_produtor = _produtor
-            args_produtor = (conn_origem, sql, params, fila)
+            args_produtor = (conn_origem, sql, params, fila, lote)
         thread = threading.Thread(
             target=alvo_produtor,
             args=args_produtor,

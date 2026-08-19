@@ -8,7 +8,7 @@ import questionary
 import typer
 
 from conduto.database.adapters import Adapter
-from conduto.database.introspect import descrever_tabela, listar_tabelas
+from conduto.database.introspect import abrir_conexao, descrever_tabela, listar_tabelas
 from conduto.ui import aviso, carregando, console, erro, gerado, info, multi_selecionar, progresso
 
 custom_style = questionary.Style([
@@ -67,28 +67,35 @@ def gerar_schemas_automaticos(
         return False
 
     descricoes: List[Dict[str, Any]] = []
-    with progresso(len(selecionadas), "Lendo colunas das tabelas selecionadas...") as (barra, tarefa):
-        for sel in selecionadas:
-            try:
-                descricao = descrever_tabela(adapter, credenciais, sel["schema"], sel["table"])
-            except Exception as exc:
-                console.print(erro(
-                    "Falha ao ler a tabela {tabela}: {erro}",
-                    tabela=sel["table"],
-                    erro=exc,
-                ))
+    conexao = abrir_conexao(adapter, credenciais)
+    try:
+        with progresso(len(selecionadas), "Lendo colunas das tabelas selecionadas...") as (barra, tarefa):
+            for sel in selecionadas:
+                try:
+                    descricao = descrever_tabela(
+                        adapter, credenciais, sel["schema"], sel["table"], conexao=conexao
+                    )
+                except Exception as exc:
+                    console.print(erro(
+                        "Falha ao ler a tabela {tabela}: {erro}",
+                        tabela=sel["table"],
+                        erro=exc,
+                    ))
+                    barra.advance(tarefa)
+                    continue
+                if not descricao["columns"]:
+                    console.print(aviso(
+                        "Atenção: tabela {tabela} não retornou colunas; pulando.",
+                        tabela=sel["table"],
+                    ))
+                    barra.advance(tarefa)
+                    continue
+                descricao["schema"] = schema_destino
+                descricoes.append(descricao)
                 barra.advance(tarefa)
-                continue
-            if not descricao["columns"]:
-                console.print(aviso(
-                    "Atenção: tabela {tabela} não retornou colunas; pulando.",
-                    tabela=sel["table"],
-                ))
-                barra.advance(tarefa)
-                continue
-            descricao["schema"] = schema_destino
-            descricoes.append(descricao)
-            barra.advance(tarefa)
+    finally:
+        if conexao is not None:
+            conexao.close()
 
     if not descricoes:
         console.print(erro("Não foi possível gerar schemas a partir do banco de origem."))
