@@ -9,11 +9,16 @@ from rich.console import Console
 
 from conduto.database.adapters import (
     ADAPTERS,
+    conectar_clickhouse,
+    conectar_duckdb,
     conectar_mysql,
     conectar_postgres,
     conectar_sqlserver,
+    delta_base,
+    delta_storage_options,
 )
 from conduto.database.admin import schema_padrao_sgbd
+from conduto.database.particularidades import PARTICULARIDADES
 
 console = Console()
 
@@ -183,6 +188,92 @@ _TIPOS_POR_SGBD: Dict[str, Dict[str, str]] = {
         "enum": "nvarchar(255)",
         "user-defined": "nvarchar(255)",
         "xml": "xml",
+    },    "clickhouse": {
+        "text": "String",
+        "varchar": "String",
+        "char": "FixedString",
+        "integer": "Int32",
+        "int": "Int32",
+        "bigint": "Int64",
+        "smallint": "Int16",
+        "tinyint": "Int8",
+        "boolean": "Bool",
+        "bool": "Bool",
+        "timestamp": "DateTime64(3)",
+        "timestamptz": "DateTime64(3)",
+        "date": "Date32",
+        "time": "String",
+        "timetz": "String",
+        "double": "Float64",
+        "float": "Float32",
+        "real": "Float32",
+        "numeric": "Decimal",
+        "decimal": "Decimal",
+        "uuid": "UUID",
+        "json": "JSON",
+        "jsonb": "JSON",
+        "binary": "String",
+        "enum": "String",
+        "user-defined": "String",
+        "xml": "String",
+    },
+    "duckdb": {
+        "text": "text",
+        "varchar": "varchar",
+        "char": "char",
+        "integer": "integer",
+        "int": "integer",
+        "bigint": "bigint",
+        "smallint": "smallint",
+        "tinyint": "tinyint",
+        "boolean": "boolean",
+        "bool": "boolean",
+        "timestamp": "timestamp",
+        "timestamptz": "timestamptz",
+        "date": "date",
+        "time": "time",
+        "timetz": "time",
+        "double": "double",
+        "float": "real",
+        "real": "real",
+        "numeric": "decimal",
+        "decimal": "decimal",
+        "uuid": "uuid",
+        "json": "json",
+        "jsonb": "json",
+        "binary": "blob",
+        "enum": "varchar(255)",
+        "user-defined": "varchar(255)",
+        "xml": "varchar(255)",
+    },
+    "deltalake": {
+        "text": "string",
+        "varchar": "string",
+        "char": "string",
+        "integer": "integer",
+        "int": "integer",
+        "bigint": "bigint",
+        "smallint": "smallint",
+        "tinyint": "tinyint",
+        "boolean": "boolean",
+        "bool": "boolean",
+        "timestamp": "timestamp",
+        "timestamptz": "timestamp",
+        "date": "date",
+        "time": "time",
+        "timetz": "time",
+        "double": "double",
+        "float": "float",
+        "real": "float",
+        "numeric": "decimal",
+        "decimal": "decimal",
+        "uuid": "string",
+        "json": "string",
+        "jsonb": "string",
+        "binary": "binary",
+        "enum": "string",
+        "user-defined": "string",
+        "xml": "string",
     },
 }
 
@@ -190,6 +281,9 @@ _VARCHAR_SEM_TAMANHO = {
     "postgresql": "text",
     "mysql": "varchar(255)",
     "sqlserver": "nvarchar(255)",
+    "clickhouse": "String",
+    "duckdb": "varchar",
+    "deltalake": "string",
 }
 
 
@@ -200,6 +294,8 @@ def mapear_tipo(tipo: str, sgbd: str) -> str:
     correspondencia = re.match(r"^([a-z0-9_ ]+?)\s*\((.*)\)$", texto, re.IGNORECASE)
     if correspondencia:
         base = correspondencia.group(1).strip().lower()
+        if sgbd == "deltalake" and base in ("text", "varchar", "char"):
+            return "string"
         novo = mapeamento.get(base)
         if novo is None:
             return texto
@@ -208,6 +304,8 @@ def mapear_tipo(tipo: str, sgbd: str) -> str:
         return f"{novo}({correspondencia.group(2)})"
 
     base = texto.lower()
+    if sgbd == "deltalake" and base in ("text", "varchar", "char"):
+        return "string"
     novo = mapeamento.get(base)
     if novo is None:
         return texto
@@ -247,6 +345,32 @@ _EXPRESSOES_DEFAULT: Dict[str, Dict[str, str]] = {
         "getdate()": "GETDATE()",
         "newid()": "NEWID()",
         "uuid()": "NEWID()",
+    },    "clickhouse": {
+        "now()": "now()",
+        "current_timestamp": "now()",
+        "clock_timestamp()": "now()",
+        "gen_random_uuid()": "generateUUIDv4()",
+        "getdate()": "now()",
+        "newid()": "generateUUIDv4()",
+        "uuid()": "generateUUIDv4()",
+    },
+    "duckdb": {
+        "now()": "now()",
+        "current_timestamp": "CURRENT_TIMESTAMP",
+        "clock_timestamp()": "now()",
+        "gen_random_uuid()": "gen_random_uuid()",
+        "getdate()": "now()",
+        "newid()": "gen_random_uuid()",
+        "uuid()": "gen_random_uuid()",
+    },
+    "deltalake": {
+        "now()": "now()",
+        "current_timestamp": "CURRENT_TIMESTAMP",
+        "clock_timestamp()": "now()",
+        "gen_random_uuid()": "gen_random_uuid()",
+        "getdate()": "now()",
+        "newid()": "gen_random_uuid()",
+        "uuid()": "gen_random_uuid()",
     },
 }
 
@@ -284,7 +408,8 @@ def _default_sql(valor: Any, sgbd: str) -> str:
         return _EXPRESSOES_DEFAULT.get(sgbd, {}).get(chave, texto)
 
     if texto.upper() in _PALAVRAS_RESERVADAS_DEFAULT:
-        return texto.upper()
+        chave = texto.lower()
+        return _EXPRESSOES_DEFAULT.get(sgbd, {}).get(chave, texto.upper())
 
     return "'" + texto.replace("'", "''") + "'"
 
@@ -296,7 +421,7 @@ def _default_sql(valor: Any, sgbd: str) -> str:
 
 def _aspas(sgbd: str, identificador: str) -> str:
     """Protege identificadores conforme o SGBD de destino."""
-    if sgbd == "mysql":
+    if sgbd in ("mysql", "clickhouse"):
         return f"`{identificador}`"
     if sgbd == "sqlserver":
         return f"[{identificador}]"
@@ -359,24 +484,29 @@ def gerar_ddl_tabela(tabela: Dict[str, Any], sgbd: str) -> str:
     linhas = [_linha_coluna(c, sgbd) for c in tabela.get("columns", [])]
 
     pks = [c["name"] for c in tabela["columns"] if c.get("primary_key")]
-    if pks:
+    particulares = PARTICULARIDADES[sgbd]
+    if particulares.suporta_pk and pks:
+        # Delta Lake e ClickHouse nao tem constraints no CREATE TABLE: no
+        # ClickHouse a chave primaria vira o ORDER BY do MergeTree.
         nome_pk = f"pk_{nome}"
         linhas.append(
             f"  CONSTRAINT {_aspas(sgbd, nome_pk)} PRIMARY KEY "
-            f"({', '.join(_aspas(sgbd, p) for p in pks)})"
+            f"({', '.join(_aspas(sgbd, c) for c in pks)})"
         )
 
-    for coluna in tabela["columns"]:
-        if coluna.get("unique"):
-            nome_uq = f"uq_{nome}_{coluna['name']}"
-            linhas.append(
-                f"  CONSTRAINT {_aspas(sgbd, nome_uq)} UNIQUE ({_aspas(sgbd, coluna['name'])})"
-            )
+    if particulares.suporta_unique:
+        for coluna in tabela["columns"]:
+            if coluna.get("unique"):
+                nome_uq = f"uq_{nome}_{coluna['name']}"
+                linhas.append(
+                    f"  CONSTRAINT {_aspas(sgbd, nome_uq)} UNIQUE ({_aspas(sgbd, coluna['name'])})"
+                )
 
-    for coluna in tabela["columns"]:
-        fk = _linha_foreign_key(tabela, coluna, sgbd)
-        if fk:
-            linhas.append(fk)
+    if particulares.suporta_fk:
+        for coluna in tabela["columns"]:
+            fk = _linha_foreign_key(tabela, coluna, sgbd)
+            if fk:
+                linhas.append(fk)
 
     corpo = ",\n".join(linhas)
 
@@ -387,13 +517,48 @@ def gerar_ddl_tabela(tabela: Dict[str, Any], sgbd: str) -> str:
             f"CREATE TABLE {qualificado} (\n{corpo}\n);\n"
             "END"
         )
+    if sgbd == "clickhouse":
+        engine = tabela.get("engine") or particulares.engine_padrao or "MergeTree"
+        order_by = tabela.get("order_by") or pks
+        if isinstance(order_by, list):
+            ordem = ", ".join(_aspas(sgbd, str(c)) for c in order_by)
+            ordem_sql = f"({ordem})" if ordem else "tuple()"
+        else:
+            ordem = str(order_by).strip()
+            if ordem.startswith("(") and ordem.endswith(")"):
+                ordem_sql = ordem
+            else:
+                ordem_sql = f"({ordem})" if ordem else "tuple()"
+        partes_ddl = [
+            f"CREATE TABLE IF NOT EXISTS {qualificado} (\n{corpo}\n)",
+            f"ENGINE = {engine}",
+            f"ORDER BY {ordem_sql}",
+        ]
+        if "partition_by" in particulares.chaves_tabela:
+            particao = tabela.get("partition_by")
+            if particao:
+                partes_ddl.append(f"PARTITION BY {particao}")
+        return "\n".join(partes_ddl) + ";"
+
     return f"CREATE TABLE IF NOT EXISTS {qualificado} (\n{corpo}\n);"
+
 
 
 def _preambulo_schema(schema: str, sgbd: str) -> str:
     """Garante que o schema de destino exista antes de criar as tabelas."""
-    if sgbd == "mysql":
+    particulares = PARTICULARIDADES[sgbd]
+    if sgbd == "clickhouse" and particulares.suporta_criar_banco:
+        return (
+            f"-- Garante que o banco '{schema}' existe no ClickHouse\n"
+            f"CREATE DATABASE IF NOT EXISTS {_aspas(sgbd, schema)};"
+        )
+    if sgbd in ("mysql", "deltalake") or not particulares.suporta_criar_schema:
         return ""
+    if sgbd == "duckdb":
+        return (
+            f"-- Garante que o schema '{schema}' existe no DuckDB\n"
+            f"CREATE SCHEMA IF NOT EXISTS {_aspas(sgbd, schema)};"
+        )
     if sgbd == "sqlserver":
         return (
             f"-- Garante que o schema '{schema}' existe no SQL Server\n"
@@ -404,6 +569,7 @@ def _preambulo_schema(schema: str, sgbd: str) -> str:
         f"-- Garante que o schema '{schema}' existe no PostgreSQL\n"
         f"CREATE SCHEMA IF NOT EXISTS {_aspas(sgbd, schema)};"
     )
+
 
 
 def gerar_ddl(tabelas: List[Dict[str, Any]], sgbd: str) -> str:
@@ -458,11 +624,15 @@ _CONEXOES = {
     "postgresql": conectar_postgres,
     "mysql": conectar_mysql,
     "sqlserver": conectar_sqlserver,
+    "clickhouse": conectar_clickhouse,
+    "duckdb": conectar_duckdb,
 }
 
 
 def executar_ddl(sgbd: str, credenciais: dict, comandos: List[str]) -> List[str]:
     """Executa os comandos DDL no banco de destino e devolve a lista de erros."""
+    if sgbd == "deltalake":
+        return _executar_ddl_deltalake(credenciais, comandos)
     conectar = _CONEXOES[sgbd]
     erros: List[str] = []
     conn = conectar(credenciais)
@@ -478,3 +648,110 @@ def executar_ddl(sgbd: str, credenciais: dict, comandos: List[str]) -> List[str]
     finally:
         conn.close()
     return erros
+
+
+# ---------------------------------------------------------------------------
+# Execucao no Delta Lake (cria as tabelas Delta vazias)
+# ---------------------------------------------------------------------------
+
+
+def _executar_ddl_deltalake(credenciais: dict, comandos: List[str]) -> List[str]:
+    """Cria as tabelas Delta a partir dos CREATE TABLE gerados pelo conduto."""
+    import pyarrow as pa
+    from deltalake import write_deltalake
+
+    base = delta_base(credenciais)
+    opcoes = delta_storage_options(credenciais) or None
+    erros: List[str] = []
+    for comando in comandos:
+        try:
+            tabela, campos = _parsear_create_table(comando)
+            campos_arrow = [
+                (nome, _tipo_arrow(tipo), nao_nulo) for nome, tipo, nao_nulo in campos
+            ]
+            schema_arrow = pa.schema(
+                pa.field(nome, tipo, nullable=not nao_nulo)
+                for nome, tipo, nao_nulo in campos_arrow
+            )
+            vazia = pa.Table.from_batches([], schema=schema_arrow)
+            write_deltalake(
+                f"{base}/{tabela}",
+                vazia,
+                mode="overwrite",
+                schema_mode="overwrite",
+                storage_options=opcoes,
+            )
+        except Exception as erro:
+            primeira_linha = comando.splitlines()[0] if comando.splitlines() else comando
+            erros.append(f"{primeira_linha} -> {erro}")
+    return erros
+
+
+def _parsear_create_table(comando: str):
+    """Extrai (tabela, [(coluna, tipo, not_null)]) de um CREATE TABLE do conduto."""
+    correspondencia = re.search(
+        r"CREATE TABLE (?:IF NOT EXISTS )?\"([^\"]+)\"\.\"([^\"]+)\"\s*\((.*)\)\s*;?\s*$",
+        comando,
+        re.DOTALL,
+    )
+    if not correspondencia:
+        raise ValueError("CREATE TABLE nao reconhecido (use o DDL gerado pelo conduto).")
+    tabela = correspondencia.group(2)
+    corpo = correspondencia.group(3)
+    campos = []
+    for linha in corpo.splitlines():
+        trecho = linha.strip().rstrip(",").strip()
+        if not trecho:
+            continue
+        if trecho.upper().startswith(("CONSTRAINT", "PRIMARY", "UNIQUE", "FOREIGN")):
+            continue
+        coluna = re.match(r'^\"([^\"]+)\"\s+(.+)$', trecho)
+        if not coluna:
+            continue
+        nome = coluna.group(1)
+        resto = coluna.group(2)
+        nao_nulo = False
+        if re.search(r"\s+NOT\s+NULL\b", resto, re.IGNORECASE):
+            nao_nulo = True
+            resto = re.sub(r"\s+NOT\s+NULL\b.*$", "", resto, flags=re.IGNORECASE)
+        resto = re.sub(r"\s+DEFAULT\s+.*$", "", resto, flags=re.IGNORECASE)
+        campos.append((nome, resto.strip(), nao_nulo))
+    return tabela, campos
+
+
+def _tipo_arrow(tipo: str):
+    """Mapeia o tipo do DDL do conduto para pyarrow (criacao de tabela Delta)."""
+    import pyarrow as pa
+
+    t = tipo.strip().lower()
+    if t in ("text", "varchar", "char", "string", "uuid", "json", "enum", "xml"):
+        return pa.string()
+    if t in ("integer", "int"):
+        return pa.int32()
+    if t in ("bigint", "long"):
+        return pa.int64()
+    if t == "smallint":
+        return pa.int16()
+    if t == "tinyint":
+        return pa.int8()
+    if t in ("boolean", "bool"):
+        return pa.bool_()
+    if t == "timestamp":
+        return pa.timestamp("us")
+    if t == "date":
+        return pa.date32()
+    if t == "time":
+        return pa.time64("us")
+    if t == "double":
+        return pa.float64()
+    if t in ("float", "real"):
+        return pa.float32()
+    if t in ("binary", "blob", "bytea"):
+        return pa.binary()
+    m = re.match(r"^(numeric|decimal)\((\d+),\s*(\d+)\)$", t)
+    if m:
+        return pa.decimal128(int(m.group(2)), int(m.group(3)))
+    m = re.match(r"^(numeric|decimal)\((\d+)\)$", t)
+    if m:
+        return pa.decimal128(int(m.group(2)), 0)
+    raise ValueError(f"Tipo nao mapeado para Delta: {tipo}")

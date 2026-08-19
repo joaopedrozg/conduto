@@ -123,8 +123,11 @@ def _yaml_schema(tabela: Dict[str, Any]) -> str:
         f"table: {tabela['table']}",
         f"schema: {tabela['schema']}",
         f"description: \"Tabela {tabela['table']}\"",
-        "columns:",
     ]
+    for chave in ("engine", "order_by", "partition_by"):
+        if tabela.get(chave):
+            linhas.append(f"{chave}: {_valor_yaml_seguro(str(tabela[chave]))}")
+    linhas.append("columns:")
     for coluna in tabela["columns"]:
         linhas.append(f"  - name: {coluna['name']}")
         linhas.append(f"    type: {coluna['type']}")

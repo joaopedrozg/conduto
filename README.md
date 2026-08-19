@@ -9,13 +9,14 @@ CLI para criar projetos de migração/ELT de dados: gera o `.env` com as credenc
 ## Funcionalidades
 
 - Scaffold completo de projeto ELT em um único comando
-- Fluxo interativo para configurar bancos de origem e destino (PostgreSQL, MySQL, SQL Server)
+- Fluxo interativo para configurar bancos de origem e destino (PostgreSQL, MySQL, SQL Server, ClickHouse, DuckDB e Delta Lake)
 - Geração do `.env` com as credenciais das duas pontas do duto
 - Manifesto `main.yml` com a ordem de dependência das tabelas
 - Schemas YAML de exemplo (clientes, pedidos e produtos) com PK, FK, `unique` e `default`
 - Ambiente Python gerenciado por `uv` com `pyyaml`, `jinja2`, `polars`, `dagster` e `dagster-webserver`
 - Adapta-se automaticamente a um projeto uv existente (gera direto no projeto atual, sem subpasta nem `uv init`)
 - Adapters de conexão com defaults por SGBD (porta, banco e usuário)
+- Mapa de particularidades por SGBD aplicado no fluxo do CLI e no DDL (ClickHouse: ENGINE/ORDER BY do MergeTree e sem constraints; Delta Lake: sem constraints no CREATE TABLE; MySQL: banco == schema)
 - Teste de conexão antes de gerar o projeto (com opção de digitar novamente ou seguir mesmo assim)
 - Navegação pelos bancos e schemas do servidor — sem precisar digitar o nome do banco
 - Opção de criar banco e schema no destino direto pelo fluxo interativo
@@ -31,6 +32,18 @@ CLI para criar projetos de migração/ELT de dados: gera o `.env` com as credenc
 - Feedback visual com `rich` e `questionary`: cores semânticas (sucesso, aviso, erro, info), tabelas de resumo e widgets de carregamento (spinner e barra de progresso) nas operações demoradas
 - Detecção automática do idioma da máquina (português ou inglês) com override por comando (`--lang`) ou variável de ambiente (`CONDUTO_LANG`)
 
+## Testando com Docker
+
+Há um `docker-compose.yml` na raiz com os bancos usados para testar a lib:
+PostgreSQL, MySQL e SQL Server (já suportados) + ClickHouse e DuckDB
+(analíticos) e MinIO com tabelas Delta Lake (via `deltalake`).
+
+```bash
+docker compose up -d --build
+```
+
+Credenciais, o que é criado e exemplos de uso no
+[`docker/README.md`](docker/README.md).
 ## Instalação
 
 ```bash
@@ -122,7 +135,7 @@ conduto ddl --apply
 conduto ddl --no-apply
 ```
 
-As flags `--apply` e `--no-apply` pulam a pergunta interativa (útil para scripts). O comando lê o `.env` (credenciais de destino), o `main.yml` (ordem de dependência) e os `schemas/*.yml`, traduzindo tipos e funções (ex.: `gen_random_uuid()`, `clock_timestamp()`) para o SGBD de destino (PostgreSQL, MySQL ou SQL Server). Por padrão roda no diretório atual; use `--dir caminho/do/projeto` para outro diretório.
+As flags `--apply` e `--no-apply` pulam a pergunta interativa (útil para scripts). O comando lê o `.env` (credenciais de destino), o `main.yml` (ordem de dependência) e os `schemas/*.yml`, traduzindo tipos e funções (ex.: `gen_random_uuid()`, `clock_timestamp()`) para o SGBD de destino (PostgreSQL, MySQL, SQL Server, ClickHouse, DuckDB ou Delta Lake). Por padrão roda no diretório atual; use `--dir caminho/do/projeto` para outro diretório.
 
 ### Inferindo colunas de tabelas novas
 

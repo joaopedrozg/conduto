@@ -49,6 +49,35 @@ ADAPTERS: Dict[str, Adapter] = {
         usuario_padrao="sa",
         senha_padrao="",
     ),
+    "ClickHouse": Adapter(
+        nome="ClickHouse",
+        tipo="clickhouse",
+        driver="clickhouse-connect",
+        porta_padrao="8123",
+        banco_padrao="default",
+        usuario_padrao="default",
+        senha_padrao="",
+    ),
+    "DuckDB": Adapter(
+        nome="DuckDB",
+        tipo="duckdb",
+        driver="duckdb",
+        host_padrao="origem.duckdb",
+        porta_padrao="",
+        banco_padrao="origem.duckdb",
+        usuario_padrao="",
+        senha_padrao="",
+    ),
+    "DeltaLake": Adapter(
+        nome="Delta Lake",
+        tipo="deltalake",
+        driver="deltalake",
+        host_padrao="http://localhost:9000",
+        porta_padrao="",
+        banco_padrao="deltalake",
+        usuario_padrao="minioadmin",
+        senha_padrao="minioadmin",
+    ),
 }
 
 
@@ -99,6 +128,162 @@ def conectar_sqlserver(credenciais: dict, database: str | None = None):
     )
 
 
+def conectar_clickhouse(credenciais: dict, database: str | None = None):
+    """Abre uma conexao ClickHouse (HTTP) com uma interface parecida com DBAPI."""
+    import clickhouse_connect
+
+    client = clickhouse_connect.get_client(
+        host=credenciais["host"],
+        port=int(credenciais.get("port") or "8123"),
+        username=credenciais.get("user") or "default",
+        password=credenciais.get("password") or "",
+        database=database or credenciais.get("database") or "default",
+        connect_timeout=5,
+    )
+    return _ConexaoClickHouse(client)
+
+
+def conectar_duckdb(credenciais: dict, database: str | None = None):
+    """Abre um arquivo DuckDB (embedded). O caminho vem de HOST ou DATABASE."""
+    import duckdb
+
+    caminho = database or credenciais.get("host") or credenciais.get("database")
+    if not caminho or str(caminho).strip() in (":memory:", "memory", ""):
+        return duckdb.connect()
+    return duckdb.connect(str(caminho))
+
+
+class _CursorClickHouse:
+    """Cursor minimo (DBAPI-like) sobre o cliente HTTP do ClickHouse."""
+
+    def __init__(self, client):
+        self._client = client
+        self._linhas = []
+
+    def execute(self, sql: str, params=None):
+        if params:
+            sql = _interpolar_clickhouse(sql, params)
+        comando = sql.lstrip()
+        if comando.upper().startswith(("SELECT", "SHOW", "DESCRIBE", "WITH", "EXISTS", "PRAGMA")):
+            self._linhas = self._client.query(sql).result_rows
+        else:
+            self._client.command(sql)
+            self._linhas = []
+
+    def fetchall(self):
+        return self._linhas
+
+    def fetchone(self):
+        return self._linhas[0] if self._linhas else None
+
+    def close(self):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+class _ConexaoClickHouse:
+    """Conexao ClickHouse que expoe o minimo de DBAPI usado pelo conduto."""
+
+    def __init__(self, client):
+        self._client = client
+
+    def cursor(self):
+        return _CursorClickHouse(self._client)
+
+    def commit(self):
+        pass
+
+    def close(self):
+        try:
+            self._client.close()
+        except Exception:
+            pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+def _interpolar_clickhouse(sql: str, params) -> str:
+    """Substitui os placeholders %s por valores escapados (client-side)."""
+
+    def _fmt(valor) -> str:
+        if valor is None:
+            return "NULL"
+        texto = str(valor)
+        return "'" + texto.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+    partes = sql.split("%s")
+    if len(partes) != len(params) + 1:
+        raise ValueError(f"Quantidade de placeholders %s nao bate com os parametros: {sql!r}")
+    return partes[0] + "".join(_fmt(p) + resto for p, resto in zip(params, partes[1:]))
+
+
+def delta_eh_s3(host: str) -> bool:
+    """True se o Delta Lake usa S3/MinIO (http/https/s3://) em vez de filesystem."""
+    return host.startswith(("http://", "https://", "s3://"))
+
+
+def delta_cliente_s3(credenciais: dict):
+    """Cliente boto3 para S3/MinIO a partir das credenciais do conduto."""
+    import boto3
+
+    host = credenciais["host"]
+    if host.startswith("s3://"):
+        raise ValueError(
+            "Para S3 real use o endpoint em HOST (ex.: https://s3.amazonaws.com) "
+            "e o bucket em DATABASE."
+        )
+    return boto3.client(
+        "s3",
+        endpoint_url=host,
+        aws_access_key_id=credenciais.get("user") or "",
+        aws_secret_access_key=credenciais.get("password") or "",
+        region_name="us-east-1",
+    )
+
+
+def delta_storage_options(credenciais: dict) -> dict:
+    """Storage options para a lib deltalake (vazias em modo filesystem local)."""
+    host = credenciais.get("host") or ""
+    if not host.startswith(("s3://", "http://", "https://")):
+        return {}
+    opcoes = {
+        "AWS_ACCESS_KEY_ID": credenciais.get("user") or "",
+        "AWS_SECRET_ACCESS_KEY": credenciais.get("password") or "",
+        "AWS_REGION": "us-east-1",
+        "AWS_ALLOW_HTTP": "true",
+        "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
+    }
+    if host.startswith("http"):
+        opcoes["AWS_ENDPOINT_URL"] = host
+    return opcoes
+
+
+def delta_base(credenciais: dict) -> str:
+    """Caminho base (warehouse) das tabelas Delta a partir das credenciais."""
+    host = (credenciais.get("host") or "").strip()
+    if not host:
+        raise ValueError("HOST do Delta Lake nao informado.")
+    if host.startswith("s3://"):
+        return host.rstrip("/")
+    if host.startswith(("http://", "https://")):
+        banco = (credenciais.get("database") or "").strip() or "deltalake"
+        return f"s3://{banco}"
+    banco = (credenciais.get("database") or "").strip()
+    if banco and banco != "." and banco != Path(host).name:
+        return str(Path(host) / banco)
+    return host
+
+
+
 def testar_conexao(adapter: Adapter, credenciais: dict) -> Tuple[bool, str]:
     if adapter.tipo == "postgresql":
         return _testar_postgres(credenciais)
@@ -106,6 +291,12 @@ def testar_conexao(adapter: Adapter, credenciais: dict) -> Tuple[bool, str]:
         return _testar_mysql(credenciais)
     if adapter.tipo == "sqlserver":
         return _testar_sqlserver(credenciais)
+    if adapter.tipo == "clickhouse":
+        return _testar_clickhouse(credenciais)
+    if adapter.tipo == "duckdb":
+        return _testar_duckdb(credenciais)
+    if adapter.tipo == "deltalake":
+        return _testar_delta(credenciais)
     return False, f"Adapter desconhecido: {adapter.tipo}"
 
 
@@ -152,6 +343,46 @@ def _testar_sqlserver(credenciais: dict) -> Tuple[bool, str]:
     try:
         conn = conectar_sqlserver(credenciais)
         conn.close()
+        return True, "ok"
+    except Exception as erro:
+        return False, str(erro)
+
+def _testar_clickhouse(credenciais: dict) -> Tuple[bool, str]:
+    try:
+        conn = conectar_clickhouse(credenciais)
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+        conn.close()
+        return True, "ok"
+    except Exception as erro:
+        return False, str(erro)
+
+
+def _testar_duckdb(credenciais: dict) -> Tuple[bool, str]:
+    caminho = credenciais.get("host") or credenciais.get("database") or ""
+    if str(caminho).strip() not in (":memory:", "memory", ""):
+        arquivo = Path(str(caminho))
+        if not arquivo.exists():
+            return False, f"Arquivo DuckDB nao encontrado: {caminho}"
+    try:
+        conn = conectar_duckdb(credenciais)
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+        conn.close()
+        return True, "ok"
+    except Exception as erro:
+        return False, str(erro)
+
+
+def _testar_delta(credenciais: dict) -> Tuple[bool, str]:
+    try:
+        if delta_eh_s3(credenciais["host"]):
+            cliente = delta_cliente_s3(credenciais)
+            cliente.list_buckets()
+            return True, "ok"
+        caminho = Path(credenciais["host"])
+        if not caminho.exists():
+            return False, f"Diretorio Delta Lake nao encontrado: {caminho}"
         return True, "ok"
     except Exception as erro:
         return False, str(erro)
