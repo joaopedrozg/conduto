@@ -28,6 +28,16 @@ CATALOGO_EN: dict[str, str] = {
     "Nome do novo schema:": "Name of the new schema:",
     "Schema '{nome}' criado com sucesso!": "Schema '{nome}' created successfully!",
     "Falha ao criar o schema: {erro}": "Failed to create the schema: {erro}",
+    # --- particularidades por SGBD ---
+    "Particularidades do {nome} aplicadas automaticamente": "Particularities of {nome} applied automatically",
+    "Schema explícito (padrão: public).": "Explicit schema (default: public).",
+    "No MySQL o schema é o próprio banco.": "In MySQL the schema is the database itself.",
+    "Schema explícito (padrão: dbo).": "Explicit schema (default: dbo).",
+    "Engine padrão: MergeTree (chave engine no schema para trocar).": "Default engine: MergeTree (use the engine key in the schema to change it).",
+    "Sem constraints de PK/FK/unique: a chave primária vira o ORDER BY do MergeTree.": "No PK/FK/unique constraints: the primary key becomes the MergeTree ORDER BY.",
+    "Chaves por tabela: engine, order_by e partition_by.": "Per-table keys: engine, order_by and partition_by.",
+    "Schema explícito (padrão: main).": "Explicit schema (default: main).",
+    "Sem constraints de PK/FK/unique no CREATE TABLE (Delta Lake).": "No PK/FK/unique constraints in the CREATE TABLE (Delta Lake).",
     # --- init ---
     "Bem vindo ao Conduto!": "Welcome to Conduto!",
     "Projeto uv detectado! Adaptando a estrutura ao projeto atual.": "uv project detected! Adapting the structure to the current project.",

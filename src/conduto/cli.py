@@ -13,6 +13,7 @@ from conduto.database.admin import (
     listar_schemas,
     schema_padrao_sgbd,
 )
+from conduto.database.particularidades import PARTICULARIDADES
 from conduto.ddl.ddl_render import (
     carregar_tabelas,
     credenciais_destino,
@@ -166,7 +167,21 @@ def _subir_servidor_dagster(project_dir: Path):
         console.print(aviso("Servidor Dagster encerrado."))
 
 
-def coletar_credenciais(rotulo: str, permitir_criar: bool = False):
+def _mostrar_particularidades(adapter) -> None:
+    """Exibe as particularidades que o conduto aplica automaticamente no SGBD."""
+    particulares = PARTICULARIDADES.get(adapter.tipo)
+    if particulares is None or not particulares.notas:
+        return
+    console.print(painel(
+        t("Particularidades do {nome} aplicadas automaticamente", nome=adapter.nome),
+        "\n".join(f"  \u2022 {t(nota)}" for nota in particulares.notas),
+        cor=CORES["info"],
+    ))
+
+
+def coletar_credenciais(
+    rotulo: str, permitir_criar: bool = False, mostrar_particularidades: bool = False
+):
     while True:
         console.print(separador())
         sgbd = selecionar("Selecione o SGBD de {rotulo}:", ADAPTERS.keys(), rotulo=rotulo)
@@ -249,7 +264,7 @@ def coletar_credenciais(rotulo: str, permitir_criar: bool = False):
         if conectado:
             banco = _escolher_banco(adapter, credenciais, rotulo, permitir_criar)
             credenciais["database"] = banco
-            if adapter.tipo == "mysql":
+            if adapter.tipo in ("mysql", "clickhouse", "deltalake"):
                 credenciais["schema"] = banco
             else:
                 credenciais["schema"] = _escolher_schema(adapter, credenciais, rotulo, permitir_criar)
@@ -258,6 +273,9 @@ def coletar_credenciais(rotulo: str, permitir_criar: bool = False):
             banco = pedir("DATABASE:", padrao=adapter.banco_padrao)
             credenciais["database"] = banco
             credenciais["schema"] = schema_padrao_sgbd(adapter, credenciais)
+
+        if mostrar_particularidades:
+            _mostrar_particularidades(adapter)
 
         return credenciais, adapter
 
@@ -351,7 +369,9 @@ def init(
         ))
 
     origem, adapter_origem = coletar_credenciais(t("origem"))
-    destino, adapter_destino = coletar_credenciais(t("destino"), permitir_criar=True)
+    destino, adapter_destino = coletar_credenciais(
+        t("destino"), permitir_criar=True, mostrar_particularidades=True
+    )
 
     console.print(separador())
     opcao_auto = t("Gerar automaticamente a partir do banco de origem")

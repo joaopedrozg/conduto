@@ -1,8 +1,21 @@
 """Introspecção do banco de origem para geração automática de schemas YAML."""
 
+import re
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from conduto.database.adapters import Adapter, conectar_mysql, conectar_postgres, conectar_sqlserver
+from conduto.database.adapters import (
+    Adapter,
+    conectar_clickhouse,
+    conectar_duckdb,
+    conectar_mysql,
+    conectar_postgres,
+    conectar_sqlserver,
+    delta_base,
+    delta_cliente_s3,
+    delta_eh_s3,
+    delta_storage_options,
+)
 
 
 def listar_tabelas(adapter: Adapter, credenciais: dict) -> List[Dict[str, str]]:
@@ -13,6 +26,12 @@ def listar_tabelas(adapter: Adapter, credenciais: dict) -> List[Dict[str, str]]:
         return _listar_tabelas_mysql(credenciais)
     if adapter.tipo == "sqlserver":
         return _listar_tabelas_sqlserver(credenciais)
+    if adapter.tipo == "clickhouse":
+        return _listar_tabelas_clickhouse(credenciais)
+    if adapter.tipo == "duckdb":
+        return _listar_tabelas_duckdb(credenciais)
+    if adapter.tipo == "deltalake":
+        return _listar_tabelas_deltalake(credenciais)
     raise ValueError(f"Adapter desconhecido: {adapter.tipo}")
 
 
@@ -24,6 +43,12 @@ def descrever_tabela(adapter: Adapter, credenciais: dict, schema: str, table: st
         return _descrever_tabela_mysql(credenciais, schema, table)
     if adapter.tipo == "sqlserver":
         return _descrever_tabela_sqlserver(credenciais, schema, table)
+    if adapter.tipo == "clickhouse":
+        return _descrever_tabela_clickhouse(credenciais, schema, table)
+    if adapter.tipo == "duckdb":
+        return _descrever_tabela_duckdb(credenciais, schema, table)
+    if adapter.tipo == "deltalake":
+        return _descrever_tabela_deltalake(credenciais, schema, table)
     raise ValueError(f"Adapter desconhecido: {adapter.tipo}")
 
 
@@ -40,7 +65,8 @@ def inferir_tipo(data_type: Optional[str], comprimento: Optional[int] = None,
         if comprimento is None or comprimento <= 0:
             return "char"
         return f"char({comprimento})"
-    if t in ("text", "tinytext", "mediumtext", "longtext", "ntext"):
+    if t in ("text", "tinytext", "mediumtext", "longtext", "ntext",
+             "string", "utf8", "large_string", "clob"):
         return "text"
     if t in ("numeric", "decimal"):
         if precisao is not None and escala is not None and escala > 0:
@@ -52,44 +78,77 @@ def inferir_tipo(data_type: Optional[str], comprimento: Optional[int] = None,
         return "numeric(19, 4)"
     if t == "smallmoney":
         return "numeric(10, 4)"
-    if t in ("int", "integer", "int4", "serial", "serial4", "mediumint"):
+    if t in ("int", "integer", "int4", "int32", "serial", "serial4",
+             "mediumint", "uint16"):
         return "integer"
-    if t in ("bigint", "int8", "bigserial", "serial8"):
+    if t in ("bigint", "int64", "bigserial", "serial8", "int128", "int256",
+             "uint32", "uint64", "uint128", "uint256", "hugeint", "uhugeint"):
         return "bigint"
-    if t in ("smallint", "int2"):
+    if t in ("smallint", "int2", "int16", "uint8"):
         return "smallint"
-    if t in ("tinyint", "int1"):
+    if t in ("tinyint", "int1", "int8"):
         return "tinyint"
     if t in ("boolean", "bool"):
         return "boolean"
     if t == "bit":
         return "boolean"
-    if t in ("timestamp without time zone", "timestamp", "datetime", "datetime2", "smalldatetime"):
+    if t in ("timestamp without time zone", "timestamp", "datetime",
+             "datetime2", "smalldatetime"):
         return "timestamp"
     if t in ("timestamp with time zone", "timestamptz", "datetimeoffset"):
         return "timestamptz"
-    if t == "date":
+    if t in ("date", "date32", "date64"):
         return "date"
     if t in ("time", "time without time zone"):
         return "time"
     if t in ("time with time zone", "timetz"):
         return "timetz"
-    if t in ("double precision", "double", "float8"):
+    if t in ("double precision", "double", "float8", "float64"):
         return "double"
-    if t in ("real", "float", "float4"):
+    if t in ("real", "float", "float4", "float32"):
         return "float"
     if t in ("uuid", "uniqueidentifier"):
         return "uuid"
     if t in ("json", "jsonb"):
         return "json"
     if t in ("bytea", "blob", "tinyblob", "mediumblob", "longblob",
-             "binary", "varbinary", "image"):
+             "binary", "varbinary", "image", "large_binary"):
         return "binary"
-    if t == "enum":
+    if t in ("enum", "enum8", "enum16"):
         return "enum"
     if t == "xml":
         return "xml"
+
+    # Tipos compostos: ClickHouse, DuckDB e Delta (Arrow)
+    if t.startswith(("nullable(", "lowcardinality(")):
+        interno = t.split("(", 1)[1].rsplit(")", 1)[0]
+        return inferir_tipo(interno, comprimento, precisao, escala)
+    if t.startswith("fixedstring("):
+        numeros = _extrair_ints(t)
+        return f"char({numeros[0]})" if numeros else "char"
+    if t.startswith(("decimal(", "numeric(")):
+        numeros = _extrair_ints(t)
+        if len(numeros) >= 2:
+            return f"numeric({numeros[0]}, {numeros[1]})"
+        if numeros:
+            return f"numeric({numeros[0]})"
+        return "numeric"
+    if t.startswith("datetime64"):
+        return "timestamp"
+    if t.startswith(("time64", "time32")):
+        return "time"
+    if t.startswith("timestamp["):
+        return "timestamptz" if "tz=" in t else "timestamp"
+    if t.startswith(("enum8", "enum16")):
+        return "enum"
     return t
+
+
+def _extrair_ints(texto: str) -> List[int]:
+    """Extrai os inteiros de uma string (ex.: 'decimal(10, 2)' -> [10, 2])."""
+    import re
+    return [int(x) for x in re.findall(r"\d+", texto)]
+
 
 
 def limpar_default(default: Optional[str], tipo_sgbd: str) -> Optional[str]:
@@ -118,6 +177,13 @@ def limpar_default(default: Optional[str], tipo_sgbd: str) -> Optional[str]:
             d = d[1:-1]
         if d.startswith("N'") and d.endswith("'"):
             d = d[1:]  # N'valor' -> 'valor'
+        if len(d) >= 2 and d.startswith("'") and d.endswith("'"):
+            d = d[1:-1]
+    elif tipo_sgbd == "duckdb":
+        if d.startswith("nextval("):
+            return None
+        if "::" in d:  # remove cast: 'x'::DATE -> 'x'
+            d = d.split("::", 1)[0].strip()
         if len(d) >= 2 and d.startswith("'") and d.endswith("'"):
             d = d[1:-1]
     elif tipo_sgbd == "mysql":
@@ -386,5 +452,212 @@ def _descrever_tabela_sqlserver(credenciais: dict, schema: str, table: str) -> D
             "unique": nome in uniques and nome not in pks,
             "default": limpar_default(default, "sqlserver"),
             "foreign_key": _formatar_fk(*fk_por_coluna.get(nome, (None, None, None)), schema),
+        })
+    return {"table": table, "schema": schema, "columns": colunas}
+# ---------------------------------------------------------------------------
+# ClickHouse
+# ---------------------------------------------------------------------------
+
+def _listar_tabelas_clickhouse(credenciais: dict) -> List[Dict[str, str]]:
+    conn = conectar_clickhouse(credenciais)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT database, name
+                FROM system.tables
+                WHERE database = currentDatabase()
+                  AND is_temporary = 0 AND engine != 'View'
+                ORDER BY database, name
+                """
+            )
+            return [{"schema": d, "table": t} for d, t in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def _descrever_tabela_clickhouse(credenciais: dict, schema: str, table: str) -> Dict[str, Any]:
+    conn = conectar_clickhouse(credenciais)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT name, type, default_expression, is_in_primary_key
+                FROM system.columns
+                WHERE database = %s AND table = %s
+                ORDER BY position
+                """,
+                (schema, table),
+            )
+            colunas_raw = cur.fetchall()
+
+            cur.execute(
+                """
+                SELECT engine, sorting_key, partition_key
+                FROM system.tables
+                WHERE database = %s AND name = %s
+                """,
+                (schema, table),
+            )
+            linha_tabela = cur.fetchone()
+    finally:
+        conn.close()
+
+    colunas = []
+    for nome, tipo, default, eh_pk in colunas_raw:
+        nullable = tipo.startswith("Nullable(")
+        tipo_base = tipo[len("Nullable("):-1] if nullable else tipo
+        colunas.append({
+            "name": nome,
+            "type": inferir_tipo(tipo_base),
+            "nullable": nullable,
+            "primary_key": bool(eh_pk),
+            "unique": False,
+            "default": limpar_default(default, "clickhouse"),
+            "foreign_key": None,
+        })
+    resultado = {"table": table, "schema": schema, "columns": colunas}
+    if linha_tabela:
+        engine, sorting_key, partition_key = linha_tabela
+        if engine:
+            resultado["engine"] = engine
+        if sorting_key:
+            resultado["order_by"] = sorting_key
+        if partition_key:
+            resultado["partition_by"] = partition_key
+    return resultado
+
+
+# ---------------------------------------------------------------------------
+# DuckDB
+# ---------------------------------------------------------------------------
+
+def _listar_tabelas_duckdb(credenciais: dict) -> List[Dict[str, str]]:
+    conn = conectar_duckdb(credenciais)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT table_schema, table_name
+                FROM information_schema.tables
+                WHERE table_type = 'BASE TABLE'
+                  AND table_schema NOT IN ('information_schema', 'pg_catalog')
+                ORDER BY table_schema, table_name
+                """
+            )
+            return [{"schema": s, "table": t} for s, t in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def _descrever_tabela_duckdb(credenciais: dict, schema: str, table: str) -> Dict[str, Any]:
+    conn = conectar_duckdb(credenciais)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT column_name, data_type, is_nullable, column_default
+                FROM information_schema.columns
+                WHERE table_schema = ? AND table_name = ?
+                ORDER BY ordinal_position
+                """,
+                (schema, table),
+            )
+            colunas_raw = cur.fetchall()
+
+            cur.execute(
+                """
+                SELECT constraint_type, constraint_column_names,
+                       referenced_table, referenced_column_names
+                FROM duckdb_constraints()
+                WHERE schema_name = ? AND table_name = ?
+                """,
+                (schema, table),
+            )
+            restricoes = cur.fetchall()
+    finally:
+        conn.close()
+
+    pks: set = set()
+    uniques: set = set()
+    fk_por_coluna: dict = {}
+    for tipo, cols, ref_tabela, ref_cols in restricoes:
+        if tipo == "PRIMARY KEY":
+            pks.update(cols)
+        elif tipo == "UNIQUE":
+            uniques.update(cols)
+        elif tipo == "FOREIGN KEY":
+            if "." in ref_tabela:
+                ref_schema, _, nome_ref = ref_tabela.partition(".")
+            else:
+                ref_schema, nome_ref = schema, ref_tabela
+            for col, ref_col in zip(cols, ref_cols or []):
+                fk_por_coluna[col] = (ref_schema, nome_ref, ref_col)
+
+    colunas = []
+    for nome, tipo, is_nullable, default in colunas_raw:
+        colunas.append({
+            "name": nome,
+            "type": inferir_tipo(tipo),
+            "nullable": is_nullable in ("YES", True),
+            "primary_key": nome in pks,
+            "unique": nome in uniques and nome not in pks,
+            "default": limpar_default(default, "duckdb"),
+            "foreign_key": _formatar_fk(*fk_por_coluna.get(nome, (None, None, None)), schema),
+        })
+    return {"table": table, "schema": schema, "columns": colunas}
+
+
+# ---------------------------------------------------------------------------
+# Delta Lake
+# ---------------------------------------------------------------------------
+
+def _listar_tabelas_deltalake(credenciais: dict) -> List[Dict[str, str]]:
+    host = credenciais.get("host") or ""
+    if delta_eh_s3(host):
+        base = delta_base(credenciais)  # s3://bucket[/prefixo]
+        if host.startswith("http"):
+            bucket = base.split("://", 1)[1]
+        else:
+            bucket = base.split("://", 1)[1].split("/", 1)[0]
+        prefixo = ""
+        if "/" in base.split("://", 1)[1]:
+            prefixo = base.split("://", 1)[1].split("/", 1)[1].rstrip("/") + "/"
+        cliente = delta_cliente_s3(credenciais)
+        resposta = cliente.list_objects_v2(Bucket=bucket, Delimiter="/", Prefix=prefixo)
+        return [
+            {"schema": bucket, "table": p["Prefix"].strip("/").split("/")[-1]}
+            for p in resposta.get("CommonPrefixes", [])
+        ]
+    base = Path(host)
+    if not base.exists():
+        return []
+    return [
+        {"schema": base.name or ".", "table": p.name}
+        for p in sorted(base.iterdir())
+        if p.is_dir() and (p / "_delta_log").exists()
+    ]
+
+
+def _descrever_tabela_deltalake(credenciais: dict, schema: str, table: str) -> Dict[str, Any]:
+    from deltalake import DeltaTable
+
+    caminho = f"{delta_base(credenciais)}/{table}"
+    opcoes = delta_storage_options(credenciais) or None
+    tabela = DeltaTable(caminho, storage_options=opcoes)
+    colunas = []
+    for campo in tabela.schema().fields:
+        tipo_texto = str(campo.type)
+        primitivo = re.search(r'PrimitiveType\("([^"]+)"\)', tipo_texto)
+        if primitivo:
+            tipo_texto = primitivo.group(1)
+        colunas.append({
+            "name": campo.name,
+            "type": inferir_tipo(tipo_texto),
+            "nullable": campo.nullable,
+            "primary_key": False,
+            "unique": False,
+            "default": None,
+            "foreign_key": None,
         })
     return {"table": table, "schema": schema, "columns": colunas}

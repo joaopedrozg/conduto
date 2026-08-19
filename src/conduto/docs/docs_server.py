@@ -16,6 +16,7 @@ import yaml
 from jinja2 import Environment, FileSystemLoader
 
 from conduto.database.adapters import ADAPTERS
+from conduto.database.particularidades import PARTICULARIDADES
 from conduto.ddl.ddl_render import carregar_tabelas, credenciais_destino, gerar_ddl
 from conduto.ui import aviso, console, erro, info, neutro, separador
 
@@ -200,6 +201,25 @@ def _resumo_schedules(dados: Dict[str, Any]) -> Dict[str, Any]:
     return {"geral": main.get("schedule") or {}, "tabelas": lista}
 
 
+def _resumo_particularidades() -> List[Dict[str, Any]]:
+    """Lista as particularidades de cada SGBD para a página de docs."""
+    return [
+        {
+            "tipo": p.tipo,
+            "nome": p.nome,
+            "schema_recurso": p.schema_recurso,
+            "suporta_pk": p.suporta_pk,
+            "suporta_unique": p.suporta_unique,
+            "suporta_fk": p.suporta_fk,
+            "engine_padrao": p.engine_padrao or "",
+            "requer_order_by": p.requer_order_by,
+            "chaves_tabela": list(p.chaves_tabela),
+            "notas": list(p.notas),
+        }
+        for p in PARTICULARIDADES.values()
+    ]
+
+
 def coletar_dados(project_dir: Path) -> Dict[str, Any]:
     """Coleta todas as informa\u00e7\u00f5es usadas na p\u00e1gina de documenta\u00e7\u00e3o."""
     project_dir = Path(project_dir)
@@ -235,6 +255,7 @@ def coletar_dados(project_dir: Path) -> Dict[str, Any]:
         "arvore": _montar_arvore(project_dir),
         "env": env,
         "conexoes": conexoes,
+        "particularidades": _resumo_particularidades(),
         "main": main,
         "tabelas": tabelas,
         "total_colunas": sum(t["qtd_colunas"] for t in tabelas),

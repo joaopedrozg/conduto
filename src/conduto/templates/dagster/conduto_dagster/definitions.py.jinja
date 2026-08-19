@@ -19,10 +19,9 @@ from dagster import (
     define_asset_job,
 )
 
-from .etl import carregar_tabela, ler_schedule_geral, ler_tabelas
+from .etl import carregar_tabela, ler_tabelas
 
 TABELAS = ler_tabelas()
-GERAL = ler_schedule_geral()
 
 
 def _nome_seguro(nome: str) -> str:
@@ -64,29 +63,7 @@ def _criar_schedule(tabela):
 SCHEDULES = [_criar_schedule(t) for t in TABELAS]
 
 
-@asset(
-    name="modelo_geral",
-    group_name="conduto",
-    deps=[AssetKey(t["table"]) for t in TABELAS],
-    description="Pipeline geral: executa todas as tabelas na ordem de dependência.",
-)
-def modelo_geral(context):
-    """Executa o modelo geral (todas as tabelas, na ordem do main.yml)."""
-    context.log.info(f"Modelo geral: {len(TABELAS)} tabela(s) executada(s).")
-
-
-JOB_GERAL = define_asset_job(
-    "job_modelo_geral",
-    selection=AssetSelection.assets(AssetKey("modelo_geral")),
-)
-
-SCHEDULE_GERAL = ScheduleDefinition(
-    name="schedule_modelo_geral",
-    job=JOB_GERAL,
-    cron_schedule=GERAL.get("cron", "0 * * * *"),
-)
-
 defs = Definitions(
-    assets=[*ASSETS, modelo_geral],
-    schedules=[*SCHEDULES, SCHEDULE_GERAL],
+    assets=ASSETS,
+    schedules=SCHEDULES,
 )

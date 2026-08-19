@@ -156,6 +156,7 @@
   .card .valor { font-size: 22px; font-weight: 700; margin-top: 4px; }
   .card .meta { margin: 6px 0 0; }
   .conexao { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+  .notas { margin: 0; padding-left: 16px; font-size: 13px; color: var(--texto2); }
   .arvore ul { list-style: none; padding-left: 18px; margin: 2px 0; }
   .arvore > ul { padding-left: 0; }
   .pasta { color: var(--amarelo); font-weight: 600; }
@@ -221,6 +222,7 @@
     <a href="#visao-geral">Visão geral</a>
     <a href="#estrutura">Estrutura de arquivos</a>
     <a href="#conexoes">Conexões</a>
+    <a href="#particularidades">Particularidades</a>
     <a href="#tabelas">Tabelas ({{ tabelas|length }})</a>
     {% for t in tabelas %}
     <a class="sub" href="#tabela-{{ t.slug }}" data-nome="{{ t.table|lower }}">{{ t.table }}</a>
@@ -321,6 +323,43 @@
       </tbody>
     </table>
     {% endif %}
+  </section>
+
+  <section id="particularidades">
+    <h2>Particularidades por SGBD</h2>
+    <p>Como o Conduto adapta o DDL e o fluxo para cada SGBD de destino.</p>
+    <table>
+      <thead>
+        <tr>
+          <th>SGBD</th><th>Schema</th><th>PK</th><th>UNIQUE</th><th>FK</th><th>Engine / ORDER BY</th><th>Notas</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for p in particularidades %}
+        <tr>
+          <td><code>{{ p.nome }}</code></td>
+          <td>{{ "banco" if p.schema_recurso == "database" else "schema" }}</td>
+          <td>{% if p.suporta_pk %}<span class="badge nn">sim</span>{% else %}<span class="badge def">não</span>{% endif %}</td>
+          <td>{% if p.suporta_unique %}<span class="badge nn">sim</span>{% else %}<span class="badge def">não</span>{% endif %}</td>
+          <td>{% if p.suporta_fk %}<span class="badge nn">sim</span>{% else %}<span class="badge def">não</span>{% endif %}</td>
+          <td>
+            {%- if p.engine_padrao -%}
+              <code>{{ p.engine_padrao }}</code>{% if p.requer_order_by %} + <code>ORDER BY</code>{% endif %}
+            {%- else -%}—{%- endif -%}
+          </td>
+          <td>
+            {%- if p.notas -%}
+            <ul class="notas">
+              {%- for nota in p.notas -%}
+              <li>{{ nota }}</li>
+              {%- endfor -%}
+            </ul>
+            {%- else -%}—{%- endif -%}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
   </section>
 
   <section id="tabelas">

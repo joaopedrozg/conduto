@@ -25,3 +25,7 @@ htmlcov/
 
 # Projetos de teste locais (scratch)
 teste/
+
+# Banco DuckDB local e dados do docker-compose
+data/
+*.duckdb

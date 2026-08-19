@@ -86,7 +86,8 @@ def ler_schedule_geral() -> Dict[str, Any]:
 
 
 def conectar(tipo: str, host: str, porta: str, banco: str, usuario: str, senha: str):
-    """Abre uma conexão com o SGBD informado (postgresql, mysql ou sqlserver)."""
+    """Abre uma conexão com o SGBD informado (postgresql, mysql, sqlserver,
+    clickhouse, duckdb ou deltalake)."""
     if tipo == "postgresql":
         import psycopg
         return psycopg.connect(
@@ -101,6 +102,24 @@ def conectar(tipo: str, host: str, porta: str, banco: str, usuario: str, senha: 
     if tipo == "sqlserver":
         import pyodbc
         return pyodbc.connect(_conn_str_sqlserver(host, porta, banco, usuario, senha))
+    if tipo == "clickhouse":
+        import clickhouse_connect
+        return _ConexaoClickHouse(
+            clickhouse_connect.get_client(
+                host=host,
+                port=int(porta) if porta else 8123,
+                username=usuario or "default",
+                password=senha or "",
+                database=banco or "default",
+                connect_timeout=5,
+            ),
+            banco or "default",
+        )
+    if tipo == "duckdb":
+        import duckdb
+        return duckdb.connect(host or banco or ":memory:")
+    if tipo == "deltalake":
+        return _ConexaoDelta(host, banco, usuario, senha)
     raise ValueError(f"SGBD não suportado: {tipo}")
 
 
@@ -139,20 +158,173 @@ def _conn_str_sqlserver(host: str, porta: str, banco: str, usuario: str, senha: 
     )
 
 
+def _interpolar_clickhouse(sql: str, params: Sequence) -> str:
+    """Substitui os placeholders %s por valores escapados (client-side)."""
+
+    def _fmt(valor: Any) -> str:
+        if valor is None:
+            return "NULL"
+        texto = str(valor)
+        return "'" + texto.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+    partes = sql.split("%s")
+    if len(partes) != len(params) + 1:
+        raise ValueError(
+            f"Quantidade de placeholders %s nao bate com os parametros: {sql!r}"
+        )
+    return partes[0] + "".join(_fmt(p) + resto for p, resto in zip(params, partes[1:]))
+
+
+class _CursorClickHouse:
+    """Cursor DBAPI-like sobre o client HTTP do ClickHouse."""
+
+    def __init__(self, client, banco: str):
+        self._client = client
+        self._banco = banco
+        self._linhas: List[Any] = []
+        self._indice = 0
+        self._colunas: List[str] = []
+        self.arraysize = 1
+
+    def execute(self, sql: str, params: Optional[Sequence] = None) -> None:
+        if params:
+            sql = _interpolar_clickhouse(sql, params)
+        comando = sql.lstrip()
+        if comando.upper().startswith(
+            ("SELECT", "SHOW", "DESCRIBE", "WITH", "EXISTS", "PRAGMA")
+        ):
+            resultado = self._client.query(sql)
+            self._colunas = list(resultado.column_names)
+            self._linhas = list(resultado.result_rows)
+        else:
+            self._client.command(sql)
+            self._colunas = []
+            self._linhas = []
+        self._indice = 0
+
+    @property
+    def description(self):
+        return [(c, None, None, None, None, None, None) for c in self._colunas]
+
+    def fetchmany(self, size: Optional[int] = None):
+        n = size or self.arraysize or 1
+        bloco = self._linhas[self._indice : self._indice + n]
+        self._indice += len(bloco)
+        return bloco
+
+    def fetchone(self):
+        bloco = self.fetchmany(1)
+        return bloco[0] if bloco else None
+
+    def close(self) -> None:
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+
+class _ConexaoClickHouse:
+    """Conexao ClickHouse que expoe o minimo de DBAPI usado pelo pipeline."""
+
+    def __init__(self, client, banco: str):
+        self._client = client
+        self._banco = banco
+
+    def cursor(self):
+        return _CursorClickHouse(self._client, self._banco)
+
+    def commit(self) -> None:
+        pass
+
+    def close(self) -> None:
+        try:
+            self._client.close()
+        except Exception:
+            pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+
+class _ConexaoDelta:
+    """Conexao logica para Delta Lake (nao ha sessao, apenas configuracao)."""
+
+    def __init__(self, host: str, banco: str, usuario: str, senha: str):
+        self.host = host
+        self.banco = banco
+        self.usuario = usuario
+        self.senha = senha
+
+    @property
+    def storage_options(self) -> Optional[Dict[str, str]]:
+        if not (self.host or "").startswith(("s3://", "http://", "https://")):
+            return None
+        opcoes = {
+            "AWS_ACCESS_KEY_ID": self.usuario or "",
+            "AWS_SECRET_ACCESS_KEY": self.senha or "",
+            "AWS_REGION": "us-east-1",
+            "AWS_ALLOW_HTTP": "true",
+            "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
+        }
+        if self.host.startswith("http"):
+            opcoes["AWS_ENDPOINT_URL"] = self.host
+        return opcoes
+
+    @property
+    def base(self) -> str:
+        """Caminho base (warehouse) das tabelas Delta."""
+        host = (self.host or "").strip()
+        if not host:
+            raise ValueError("HOST do Delta Lake nao informado.")
+        if host.startswith("s3://"):
+            return host.rstrip("/")
+        if host.startswith(("http://", "https://")):
+            return f"s3://{(self.banco or 'deltalake').strip()}"
+        banco = (self.banco or "").strip()
+        if banco and banco != "." and banco != Path(host).name:
+            return str(Path(host) / banco)
+        return host
+
+    def cursor(self):
+        raise NotImplementedError(
+            "Delta Lake nao usa cursor: leitura/escrita via helpers especificos."
+        )
+
+    def commit(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+
 def _aspas(tipo: str, nome: str) -> str:
     if tipo == "sqlserver":
         return f"[{nome}]"
-    if tipo == "mysql":
+    if tipo in ("mysql", "clickhouse"):
         return f"`{nome}`"
     return f'"{nome}"'
 
 
 def _qualificado(tipo: str, schema: str, tabela: str) -> str:
+    if tipo == "deltalake":
+        return tabela
     return f"{_aspas(tipo, schema)}.{_aspas(tipo, tabela)}"
 
 
 def _placeholder(tipo: str) -> str:
-    return "?" if tipo == "sqlserver" else "%s"
+    return "?" if tipo in ("sqlserver", "duckdb") else "%s"
 
 
 def _sql_amostra(tipo: str, origem: str) -> str:
@@ -163,6 +335,13 @@ def _sql_amostra(tipo: str, origem: str) -> str:
 
 
 def _colunas_origem(conn, tipo: str, origem: str) -> List[str]:
+    if tipo == "deltalake":
+        from deltalake import DeltaTable
+        tabela = DeltaTable(
+            f"{conn.base}/{origem}",
+            storage_options=conn.storage_options or None,
+        )
+        return [campo.name for campo in tabela.schema().fields]
     with conn.cursor() as cur:
         cur.execute(_sql_amostra(tipo, origem))
         return [descricao[0] for descricao in cur.description]
@@ -197,8 +376,38 @@ def _produtor(conn, sql: str, params: Optional[Sequence], fila, lote: int = _LOT
         fila.put(_FIM)
 
 
+def _produtor_delta(conn, tabela_nome: str, fila, lote: int = _LOTE) -> None:
+    """Le as linhas de uma tabela Delta (origem) em lotes e coloca na fila."""
+    try:
+        from deltalake import DeltaTable
+        caminho = f"{conn.base}/{tabela_nome}"
+        tabela_delta = DeltaTable(
+            caminho,
+            storage_options=conn.storage_options or None,
+        )
+        colunas = [campo.name for campo in tabela_delta.schema().fields]
+        fila.put(colunas)
+        for bloco in tabela_delta.to_pyarrow_table().to_batches(max_chunksize=lote):
+            fila.put([list(linha.values()) for linha in bloco.to_pylist()])
+    except Exception as erro:
+        fila.put(erro)
+    finally:
+        fila.put(_FIM)
+
+
 def _ultimo_valor(conn, tipo: str, destino: str, coluna: str):
     """Lê o último watermark gravado no destino (None se a tabela não existir)."""
+    if tipo == "deltalake":
+        try:
+            from deltalake import DeltaTable
+            tabela = DeltaTable(
+                f"{conn.base}/{destino}",
+                storage_options=conn.storage_options or None,
+            )
+            valores = tabela.to_pyarrow_table().column(coluna).to_pylist()
+            return max((v for v in valores if v is not None), default=None)
+        except Exception:
+            return None
     sql = f"SELECT MAX({_aspas(tipo, coluna)}) FROM {destino}"
     try:
         with conn.cursor() as cur:
@@ -211,6 +420,17 @@ def _ultimo_valor(conn, tipo: str, destino: str, coluna: str):
 
 def _truncar(conn, tipo: str, destino: str) -> None:
     """Limpa a tabela de destino (TRUNCATE com fallback para DELETE)."""
+    if tipo == "deltalake":
+        try:
+            from deltalake import DeltaTable
+            tabela = DeltaTable(
+                f"{conn.base}/{destino}",
+                storage_options=conn.storage_options or None,
+            )
+            tabela.delete("1 = 1")
+        except Exception:
+            pass
+        return
     try:
         _executar(conn, f"TRUNCATE TABLE {destino}")
     except Exception:
@@ -240,9 +460,13 @@ def _serializar(valor: Any) -> Any:
 def _copiar(conn, tipo: str, destino: str, fila, context=None) -> int:
     """Consome a fila de lotes da origem e grava no destino.
 
-    No PostgreSQL usa COPY FROM STDIN (um unico round trip); nos demais,
-    INSERT em lote por bloco.
+    No PostgreSQL usa COPY FROM STDIN; no ClickHouse usa o INSERT nativo em
+    lote; no Delta Lake usa write_deltalake; nos demais, INSERT em lote.
     """
+    if tipo == "clickhouse":
+        return _copiar_clickhouse(conn, destino, fila, context)
+    if tipo == "deltalake":
+        return _copiar_delta(conn, destino, fila, context)
     primeiro = fila.get()
     if isinstance(primeiro, Exception):
         raise primeiro
@@ -297,6 +521,61 @@ def _copiar(conn, tipo: str, destino: str, fila, context=None) -> int:
                 if context is not None and total % 20000 == 0:
                     context.log.info(f"Inseridas {total} linha(s) em {destino}.")
     conn.commit()
+    return total
+
+
+def _copiar_clickhouse(conn, destino: str, fila, context=None) -> int:
+    """Grava os lotes no ClickHouse com o INSERT nativo do client HTTP."""
+    primeiro = fila.get()
+    if isinstance(primeiro, Exception):
+        raise primeiro
+    colunas = list(primeiro)
+    if not colunas:
+        return 0
+    tabela = destino.replace("`", "")
+    total = 0
+    while True:
+        item = fila.get()
+        if item is _FIM:
+            break
+        if isinstance(item, Exception):
+            raise item
+        linhas = [tuple(_serializar(v) for v in linha) for linha in item]
+        if linhas:
+            conn._client.insert(tabela, linhas, column_names=colunas)
+            total += len(linhas)
+            if context is not None and total % 20000 == 0:
+                context.log.info(f"Inseridas {total} linha(s) em {destino}.")
+    return total
+
+
+def _copiar_delta(conn, destino: str, fila, context=None) -> int:
+    """Grava os lotes no Delta Lake com write_deltalake (mode=append)."""
+    import pyarrow as pa
+    from deltalake import write_deltalake
+
+    primeiro = fila.get()
+    if isinstance(primeiro, Exception):
+        raise primeiro
+    colunas = list(primeiro)
+    if not colunas:
+        return 0
+    caminho = f"{conn.base}/{destino}"
+    opcoes = conn.storage_options or None
+    total = 0
+    while True:
+        item = fila.get()
+        if item is _FIM:
+            break
+        if isinstance(item, Exception):
+            raise item
+        linhas = [tuple(_serializar(v) for v in linha) for linha in item]
+        if linhas:
+            tabela = pa.Table.from_pylist([dict(zip(colunas, linha)) for linha in linhas])
+            write_deltalake(caminho, tabela, mode="append", storage_options=opcoes)
+            total += len(linhas)
+            if context is not None and total % 20000 == 0:
+                context.log.info(f"Inseridas {total} linha(s) em {destino}.")
     return total
 
 
@@ -363,9 +642,15 @@ def carregar_tabela(tabela: Dict[str, Any], context=None) -> int:
 
         inicio = time.monotonic()
         fila = queue.Queue(maxsize=8)
+        if tipo_origem == "deltalake":
+            alvo_produtor = _produtor_delta
+            args_produtor = (conn_origem, nome, fila)
+        else:
+            alvo_produtor = _produtor
+            args_produtor = (conn_origem, sql, params, fila)
         thread = threading.Thread(
-            target=_produtor,
-            args=(conn_origem, sql, params, fila),
+            target=alvo_produtor,
+            args=args_produtor,
             daemon=True,
         )
         thread.start()
