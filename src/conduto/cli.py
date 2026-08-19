@@ -56,7 +56,25 @@ from conduto.ui import (
 aplicar_ajustes()
 definir_idioma(detectar_idioma())
 
-app = typer.Typer(help=t("Conduto: o duto que leva seus dados da origem ao destino."))
+app = typer.Typer(
+    help=t(
+        "Conduto: o duto que leva seus dados da origem ao destino.\n"
+        "Cria projetos ELT, gera schemas/DDL e automatiza o Dagster."
+    ),
+    epilog=t(
+        "[bold]Como usar (passo a passo)[/bold]\n"
+        "\n"
+        "  [cyan]1. conduto init meu_projeto[/cyan]   cria o projeto (.env, schemas/ e main.yml)\n"
+        "  [cyan]2. conduto ddl --apply[/cyan]        gera e aplica o DDL no banco de destino\n"
+        "  [cyan]3. conduto schedules[/cyan]          gera os schedules e o código Dagster\n"
+        "  [cyan]4. conduto dagster[/cyan]            sobe o servidor Dagster (http://localhost:3000)\n"
+        "  [cyan]5. conduto docs[/cyan]               abre a documentação web do projeto\n"
+        "\n"
+        "Dica: use [bold]conduto \\[COMANDO] --help[/bold] para ver as opções de cada comando."
+    ),
+    rich_markup_mode="rich",
+    no_args_is_help=True,
+)
 
 
 def _callback_versao(valor: bool) -> None:
@@ -78,7 +96,10 @@ def _opcoes_globais(
         is_eager=True,
     ),
 ):
-    """Conduto: o duto que leva seus dados da origem ao destino."""
+    """Conduto: o duto que leva seus dados da origem ao destino.
+
+    Cria projetos ELT, gera schemas/DDL e automatiza o Dagster.
+    """
     if lang:
         definir_idioma(lang)
 
@@ -358,7 +379,13 @@ def _escolher_schema(adapter, credenciais: dict, rotulo: str, permitir_criar: bo
             console.print(erro("Falha ao criar o schema: {erro}", erro=exc))
 
 
-@app.command(help=t("Cria/adapta o projeto ELT: .env, main.yml, schemas/ e ambiente uv."))
+@app.command(help=t(
+    "Passo 1 - cria/adapta o projeto ELT: .env, main.yml, schemas/ e ambiente uv.\n"
+    "\n"
+    "Exemplos:\n"
+    "  conduto init meu_projeto       cria um projeto novo\n"
+    "  conduto init                   adapta o projeto uv atual"
+))
 def init(
     project_name: str = typer.Argument(None, help=t("Nome do projeto (opcional se já estiver em um projeto uv)")),
 ):
@@ -477,7 +504,14 @@ def init(
             _subir_servidor_dagster(project_dir)
 
 
-@app.command(help=t("Converte os schemas YAML em DDL e cria as tabelas no banco de destino."))
+@app.command(help=t(
+    "Passo 2 - gera o DDL das tabelas e (opcionalmente) aplica no banco de destino.\n"
+    "\n"
+    "Exemplos:\n"
+    "  conduto ddl                     mostra o DDL na tela\n"
+    "  conduto ddl --apply             aplica no banco de destino\n"
+    "  conduto ddl -o ddl.sql          salva o DDL em um arquivo"
+))
 def ddl(
     directory: str = typer.Option(".", "--dir", "-d", help=t("Diretório do projeto conduto (padrão: atual)")),
     output: str = typer.Option(None, "--output", "-o", help=t("Salva o DDL em um arquivo .sql")),
@@ -539,7 +573,12 @@ def ddl(
         ))
 
 
-@app.command(help=t("Gera/atualiza os schedules dos schemas e o código Dagster padrão."))
+@app.command(help=t(
+    "Passo 3 - gera/atualiza os schedules e o código Dagster dos schemas.\n"
+    "\n"
+    "Exemplo:\n"
+    "  conduto schedules"
+))
 def schedules(
     directory: str = typer.Option(".", "--dir", "-d", help=t("Diretório do projeto conduto (padrão: atual)")),
 ):
@@ -556,7 +595,12 @@ def schedules(
         raise typer.Exit(code=1)
 
 
-@app.command(help=t("Sobe o servidor Dagster do projeto."))
+@app.command(help=t(
+    "Passo 4 - sobe o servidor Dagster do projeto.\n"
+    "\n"
+    "Exemplo:\n"
+    "  conduto dagster                 acesse http://localhost:3000"
+))
 def dagster(
     directory: str = typer.Option(".", "--dir", "-d", help=t("Diretório do projeto conduto (padrão: atual)")),
 ):
@@ -568,7 +612,12 @@ def dagster(
     _subir_servidor_dagster(project_dir)
 
 
-@app.command(help=t("Baixa e instala o ODBC Driver for SQL Server automaticamente."))
+@app.command(help=t(
+    "Baixa e instala o ODBC Driver for SQL Server automaticamente (Windows, Linux e macOS).\n"
+    "\n"
+    "Exemplo:\n"
+    "  conduto install-sqlserver-driver"
+))
 def install_sqlserver_driver():
     """Baixa e instala o ODBC Driver for SQL Server automaticamente."""
     with carregando("Instalando o ODBC Driver for SQL Server..."):
@@ -580,16 +629,13 @@ def install_sqlserver_driver():
         raise typer.Exit(code=1)
 
 
-@app.command()
-def build():
-    """
-    Build the project.
-    """
-    console.print(info("Compilando o projeto..."))
-    # Add logic to build the project here
-
-
-@app.command(help=t("Infere as colunas das tabelas do banco de origem nos schemas do projeto."))
+@app.command(help=t(
+    "Infere as colunas das tabelas do banco de origem nos schemas do projeto.\n"
+    "\n"
+    "Exemplos:\n"
+    "  conduto inferir                 infere as tabelas sem colunas\n"
+    "  conduto inferir -t clientes     infere só a tabela clientes"
+))
 def inferir(
     directory: str = typer.Option(".", "--dir", "-d", help=t("Diretório do projeto conduto (padrão: atual)")),
     tabela: Optional[str] = typer.Option(None, "--tabela", "-t", help=t("Nome da tabela para inferir (padrão: todas sem colunas)")),
@@ -609,7 +655,12 @@ def inferir(
     ))
 
 
-@app.command(help=t("Sobe um servidor web com a documentação da estrutura do projeto."))
+@app.command(help=t(
+    "Passo 5 - sobe um servidor web com a documentação da estrutura do projeto.\n"
+    "\n"
+    "Exemplo:\n"
+    "  conduto docs                    acesse http://localhost:8000"
+))
 def docs(
     directory: str = typer.Option(".", "--dir", "-d", help=t("Diretório do projeto conduto (padrão: atual)")),
     host: str = typer.Option("127.0.0.1", "--host", help=t("Endereço IP em que o servidor escuta")),
