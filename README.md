@@ -77,6 +77,12 @@ conduto --lang en init meu_projeto
 
 ## Uso
 
+Confira a versão instalada:
+
+```bash
+conduto --version
+```
+
 Crie um novo projeto de migração:
 
 ```bash
@@ -376,15 +382,20 @@ uv publish
 
 ### Publicar uma versão nova (automático)
 
-Todo merge/push para a `main` publica automaticamente no PyPI (workflow
-`Publish to PyPI`). Se a versão do `pyproject.toml` já existir no PyPI, o
-public é pulado para não falhar com versão duplicada.
+Todo merge/push para a `main` dispara o workflow `Publish to PyPI`, que faz o
+bump de versão, o build e o publish automáticos:
 
-Para publicar uma versão nova, no GitHub acesse **Actions → Release → Run
-workflow** e escolha o tipo de bump (`patch`, `minor` ou `major`). O workflow
-bumpa a versão no `pyproject.toml` e `uv.lock`, envia para a `main` (o que
-dispara o publish automático) e cria a tag `vX.Y.Z` — sem precisar mexer em
-versão na mão.
+- A versão é calculada a partir da **última versão publicada no PyPI**: bump
+  `patch` sobre ela (ex.: última `0.1.9` → publica `0.1.10`). Se o PR já
+  bumpou a versão no `pyproject.toml` (maior que a última publicada), ela é
+  publicada direto.
+- O bump é aplicado só no working tree do workflow — não é commitado na `main`
+  (o ruleset exige PR para push direto), então a versão do `pyproject.toml`
+  pode ficar atrás da versão publicada.
+- Após o publish é criada a tag `vX.Y.Z`.
+
+Para release manual (`patch`, `minor` ou `major`), use **Actions → Publish to
+PyPI → Run workflow** e escolha o tipo de bump.
 
 ## Licença
 

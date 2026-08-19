@@ -5,6 +5,7 @@ from pathlib import Path
 
 import typer
 
+from conduto import __version__
 from conduto.database.adapters import ADAPTERS, eh_administrador, instalar_driver_sqlserver, testar_conexao
 from conduto.database.admin import (
     criar_banco,
@@ -58,9 +59,24 @@ definir_idioma(detectar_idioma())
 app = typer.Typer(help=t("Conduto: o duto que leva seus dados da origem ao destino."))
 
 
+def _callback_versao(valor: bool) -> None:
+    """Imprime a versao instalada do conduto e encerra."""
+    if valor:
+        console.print(f"conduto {__version__}")
+        raise typer.Exit()
+
+
 @app.callback()
 def _opcoes_globais(
     lang: Optional[str] = typer.Option(None, "--lang", help=t("Idioma da interface (pt ou en)")),
+    versao: bool = typer.Option(
+        False,
+        "--version",
+        "-V",
+        help=t("Exibe a versão do conduto"),
+        callback=_callback_versao,
+        is_eager=True,
+    ),
 ):
     """Conduto: o duto que leva seus dados da origem ao destino."""
     if lang:
