@@ -457,12 +457,109 @@ def _serializar(valor: Any) -> Any:
     return valor
 
 
+_PROGRESSO = 20000
+_TABELA_ESCAPE_COPY = str.maketrans(
+    {"\\": "\\\\", "\t": "\\t", "\n": "\\n", "\r": "\\r"}
+)
+
+
+def _valor_copy(valor: Any) -> str:
+    """Serializa um valor para o formato de texto do COPY (PostgreSQL).
+
+    None vira \\N, bool vira t/f, dict/list viram JSON, bytes viram \\x hexa.
+    Strings sao escapadas para o COPY (backslash, tab, newline e CR) e bytes
+    NUL sao removidos (o PostgreSQL rejeita NUL em campos text).
+    """
+    if valor is None:
+        return r"\N"
+    if isinstance(valor, bool):
+        return "t" if valor else "f"
+    if isinstance(valor, (dict, list)):
+        valor = json.dumps(_sanitizar(valor), ensure_ascii=False)
+    elif isinstance(valor, (bytes, bytearray, memoryview)):
+        return ("\\x" + bytes(valor).hex()).translate(_TABELA_ESCAPE_COPY)
+    elif not isinstance(valor, str):
+        valor = str(valor)
+    if "\x00" in valor:
+        valor = valor.replace("\x00", "")
+    return valor.translate(_TABELA_ESCAPE_COPY)
+
+
+def _bloco_copy(item: Sequence) -> bytes:
+    """Converte um lote de linhas em bytes prontos para o COPY (1 linha = 1 registro)."""
+    linhas = ["\t".join([_valor_copy(v) for v in linha]) for linha in item]
+    return ("\n".join(linhas) + "\n").encode("utf-8")
+
+
+def _copiar_postgres(conn, destino: str, fila, context=None) -> int:
+    """Grava no PostgreSQL via COPY FROM STDIN em blocos pre-serializados.
+
+    Em vez de ``write_row()`` por linha (overhead de Python por linha), cada
+    lote e serializado uma unica vez para bytes e enviado com um ``write()``.
+    """
+    primeiro = fila.get()
+    if isinstance(primeiro, Exception):
+        raise primeiro
+    colunas = primeiro
+    if not colunas:
+        return 0
+    cols_sql = ", ".join(_aspas("postgresql", c) for c in colunas)
+    sql = f"COPY {destino} ({cols_sql}) FROM STDIN"
+    total = 0
+    with conn.cursor() as cur:
+        with cur.copy(sql) as copia:
+            while True:
+                item = fila.get()
+                if item is _FIM:
+                    break
+                if isinstance(item, Exception):
+                    raise item
+                copia.write(_bloco_copy(item))
+                total += len(item)
+                if context is not None and total % _PROGRESSO == 0:
+                    context.log.info(f"Copiadas {total} linha(s) para {destino}.")
+    conn.commit()
+    return total
+
+
+def _carregar_pg_para_pg(
+    conn_origem, conn_destino, destino: str, colunas, sql: str, params, context=None
+) -> int:
+    """Streaming PostgreSQL -> PostgreSQL sem converter linha por linha.
+
+    A origem serializa com ``COPY (SELECT ...) TO STDOUT`` e o destino
+    consome os bytes com ``COPY FROM STDIN``: o Python apenas repassa blocos.
+    E o caminho mais rapido para origem e destino PostgreSQL.
+    """
+    cols_sql = ", ".join(_aspas("postgresql", c) for c in colunas)
+    sql_to = f"COPY ({sql}) TO STDOUT"
+    sql_from = f"COPY {destino} ({cols_sql}) FROM STDIN"
+    total = 0
+    with conn_origem.cursor() as cur_to:
+        with cur_to.copy(sql_to, params) as copia_to:
+            with conn_destino.cursor() as cur_from:
+                with cur_from.copy(sql_from) as copia_from:
+                    for bloco in copia_to:
+                        copia_from.write(bloco)
+                        # No COPY texto cada registro termina com \n cru (newlines
+                        # dentro de valores sao escapadas como \\n), entao contar
+                        # os \n do chunk == linhas copiadas. (memoryview.count
+                        # nao funciona aqui; converter para bytes.)
+                        total += bytes(bloco).count(b"\n")
+                        if context is not None and total % _PROGRESSO == 0:
+                            context.log.info(f"Copiadas {total} linha(s) para {destino}.")
+    conn_destino.commit()
+    return total
+
+
 def _copiar(conn, tipo: str, destino: str, fila, context=None) -> int:
     """Consome a fila de lotes da origem e grava no destino.
 
-    No PostgreSQL usa COPY FROM STDIN; no ClickHouse usa o INSERT nativo em
-    lote; no Delta Lake usa write_deltalake; nos demais, INSERT em lote.
+    No PostgreSQL usa COPY FROM STDIN em blocos; no ClickHouse usa o INSERT
+    nativo em lote; no Delta Lake usa write_deltalake; nos demais, INSERT em lote.
     """
+    if tipo == "postgresql":
+        return _copiar_postgres(conn, destino, fila, context)
     if tipo == "clickhouse":
         return _copiar_clickhouse(conn, destino, fila, context)
     if tipo == "duckdb":
@@ -478,50 +575,35 @@ def _copiar(conn, tipo: str, destino: str, fila, context=None) -> int:
     cols_sql = ", ".join(_aspas(tipo, c) for c in colunas)
     total = 0
     with conn.cursor() as cur:
-        if tipo == "postgresql":
-            sql = f"COPY {destino} ({cols_sql}) FROM STDIN"
-            with cur.copy(sql) as copy:
-                while True:
-                    item = fila.get()
-                    if item is _FIM:
-                        break
-                    if isinstance(item, Exception):
-                        raise item
-                    for linha in item:
-                        copy.write_row([_serializar(v) for v in linha])
-                        total += 1
-                    if context is not None and total % 20000 == 0:
-                        context.log.info(f"Copiadas {total} linha(s) para {destino}.")
-        else:
-            ph = ", ".join(_placeholder(tipo) for _ in colunas)
-            sql = f"INSERT INTO {destino} ({cols_sql}) VALUES ({ph})"
-            rapido = tipo == "sqlserver"
-            if rapido:
-                # fast_executemany envia o lote como operacao em massa (TVP)
-                # em vez de 1 round trip por linha, muito mais rapido no pyodbc.
-                cur.fast_executemany = True
-            while True:
-                item = fila.get()
-                if item is _FIM:
-                    break
-                if isinstance(item, Exception):
-                    raise item
-                valores = [tuple(_serializar(v) for v in linha) for linha in item]
-                try:
+        ph = ", ".join(_placeholder(tipo) for _ in colunas)
+        sql = f"INSERT INTO {destino} ({cols_sql}) VALUES ({ph})"
+        rapido = tipo == "sqlserver"
+        if rapido:
+            # fast_executemany envia o lote como operacao em massa (TVP)
+            # em vez de 1 round trip por linha, muito mais rapido no pyodbc.
+            cur.fast_executemany = True
+        while True:
+            item = fila.get()
+            if item is _FIM:
+                break
+            if isinstance(item, Exception):
+                raise item
+            valores = [tuple(_serializar(v) for v in linha) for linha in item]
+            try:
+                cur.executemany(sql, valores)
+            except Exception:
+                if rapido:
+                    # Fallback seguro: desfaz o lote e tenta sem fast_executemany.
+                    conn.rollback()
+                    cur.fast_executemany = False
+                    rapido = False
                     cur.executemany(sql, valores)
-                except Exception:
-                    if rapido:
-                        # Fallback seguro: desfaz o lote e tenta sem fast_executemany.
-                        conn.rollback()
-                        cur.fast_executemany = False
-                        rapido = False
-                        cur.executemany(sql, valores)
-                    else:
-                        raise
-                total += len(valores)
-                conn.commit()
-                if context is not None and total % 20000 == 0:
-                    context.log.info(f"Inseridas {total} linha(s) em {destino}.")
+                else:
+                    raise
+            total += len(valores)
+            conn.commit()
+            if context is not None and total % _PROGRESSO == 0:
+                context.log.info(f"Inseridas {total} linha(s) em {destino}.")
     conn.commit()
     return total
 
@@ -681,29 +763,37 @@ def carregar_tabela(tabela: Dict[str, Any], context=None) -> int:
                 params = [watermark]
 
         inicio = time.monotonic()
-        lote = int(env.get("CONDUTO_LOTE") or _LOTE)
-        fila = queue.Queue(maxsize=8)
-        if tipo_origem == "deltalake":
-            alvo_produtor = _produtor_delta
-            args_produtor = (conn_origem, nome, fila, lote)
+        if tipo_origem == "postgresql" and tipo_destino == "postgresql":
+            # Caminho mais rapido: a origem serializa (COPY TO STDOUT) e o
+            # destino consome os bytes direto (COPY FROM STDIN), sem conversao
+            # de linha por linha em Python.
+            inseridos = _carregar_pg_para_pg(
+                conn_origem, conn_destino, destino, colunas, sql, params, context,
+            )
         else:
-            alvo_produtor = _produtor
-            args_produtor = (conn_origem, sql, params, fila, lote)
-        thread = threading.Thread(
-            target=alvo_produtor,
-            args=args_produtor,
-            daemon=True,
-        )
-        thread.start()
-        try:
-            inseridos = _copiar(conn_destino, tipo_destino, destino, fila, context)
-        finally:
-            while True:
-                try:
-                    fila.get_nowait()
-                except queue.Empty:
-                    break
-            thread.join(timeout=30)
+            lote = int(env.get("CONDUTO_LOTE") or _LOTE)
+            fila = queue.Queue(maxsize=8)
+            if tipo_origem == "deltalake":
+                alvo_produtor = _produtor_delta
+                args_produtor = (conn_origem, nome, fila, lote)
+            else:
+                alvo_produtor = _produtor
+                args_produtor = (conn_origem, sql, params, fila, lote)
+            thread = threading.Thread(
+                target=alvo_produtor,
+                args=args_produtor,
+                daemon=True,
+            )
+            thread.start()
+            try:
+                inseridos = _copiar(conn_destino, tipo_destino, destino, fila, context)
+            finally:
+                while True:
+                    try:
+                        fila.get_nowait()
+                    except queue.Empty:
+                        break
+                thread.join(timeout=30)
 
         if context is not None:
             tipo_carga = "full" if (forcar_full or modo == "full" or not coluna_inc) else "incremental"

@@ -426,6 +426,25 @@ bump de versão, o build e o publish automáticos:
 Para release manual (`patch`, `minor` ou `major`), use **Actions → Publish to
 PyPI → Run workflow** e escolha o tipo de bump.
 
+### Performance da carga
+
+O ETL gerado usa `COPY` para carregar no PostgreSQL:
+
+- **Origem e destino PostgreSQL**: streaming direto `COPY (SELECT ...) TO STDOUT`
+  para `COPY ... FROM STDIN` — o Python só repassa bytes, sem conversão linha a
+  linha. É o caminho mais rápido possível para o Postgres.
+- **Outras origens para PostgreSQL**: leitura em lotes (`fetchmany`) com escrita
+  via `COPY FROM STDIN` em blocos pré-serializados (um `write()` por lote).
+
+Ajustes disponíveis no `.env`:
+
+- `CONDUTO_LOTE`: linhas por lote de cópia (padrão `20000`).
+- `DB_DESTINO_STATEMENT_TIMEOUT`: timeout da carga em ms (`0` = sem limite;
+  útil em servidores gerenciados como o Supabase).
+
+Para cargas grandes, remova índices/constraints não essenciais da tabela de
+destino antes da carga full e recrie depois — o `COPY` acelera muito sem eles.
+
 ## Licença
 
 MIT
