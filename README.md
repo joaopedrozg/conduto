@@ -77,6 +77,28 @@ conduto --lang en init meu_projeto
 
 ## Uso
 
+### Fluxo rápido (passo a passo)
+
+```bash
+# 1. Cria o projeto (conexões no .env, schemas/ e main.yml)
+conduto init meu_projeto
+
+# 2. Gera e aplica o DDL das tabelas no banco de destino
+conduto ddl --apply
+
+# 3. Gera os schedules e o código Dagster
+conduto schedules
+
+# 4. Sobe o servidor Dagster (http://localhost:3000)
+conduto dagster
+
+# 5. Documentação web do projeto (http://localhost:8000)
+conduto docs
+```
+
+Use `conduto --help` e `conduto [COMANDO] --help` para ver as opções de cada
+comando.
+
 Confira a versão instalada:
 
 ```bash
