@@ -124,6 +124,7 @@ CATALOGO_EN: dict[str, str] = {
     "Setup": "Setup",
     # --- Ajuda (--help) e rótulos ---
     "Idioma da interface (pt ou en)": "Interface language (pt or en)",
+    "Exibe a versão do conduto": "Show the conduto version",
     "origem": "source",
     "destino": "destination",
     "Nome do projeto (opcional se já estiver em um projeto uv)": "Project name (optional if already in a uv project)",

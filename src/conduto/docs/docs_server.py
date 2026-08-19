@@ -30,6 +30,7 @@ _SUFIXOS_IGNORADOS = {".pyc", ".pyo"}
 _CHAVES_SENSIVEIS = ("password", "senha", "token", "secret", "api_key", "apikey")
 
 COMANDOS_CONDUTO = [
+    ("conduto --version", "Exibe a versão instalada do conduto."),
     ("conduto init [nome]", "Cria/adapta o projeto ELT: .env, main.yml, schemas/ e ambiente uv."),
     ("conduto schedules", "(Re)gera os schedules e o c\u00f3digo Dagster a partir dos schemas."),
     ("conduto ddl", "Gera (e opcionalmente aplica) o DDL das tabelas no banco de destino."),
