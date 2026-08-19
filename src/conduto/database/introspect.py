@@ -35,18 +35,43 @@ def listar_tabelas(adapter: Adapter, credenciais: dict) -> List[Dict[str, str]]:
     raise ValueError(f"Adapter desconhecido: {adapter.tipo}")
 
 
-def descrever_tabela(adapter: Adapter, credenciais: dict, schema: str, table: str) -> Dict[str, Any]:
-    """Descreve as colunas de uma tabela (tipos, PK, FK, unique, default, nullable)."""
+_CONEXOES = {
+    "postgresql": conectar_postgres,
+    "mysql": conectar_mysql,
+    "sqlserver": conectar_sqlserver,
+    "clickhouse": conectar_clickhouse,
+    "duckdb": conectar_duckdb,
+}
+
+
+def abrir_conexao(adapter: Adapter, credenciais: dict):
+    """Abre uma conexao para reutilizar na introspect de varias tabelas.
+
+    Delta Lake nao usa conexao e devolve None (leitura direta dos arquivos).
+    """
+    if adapter.tipo == "deltalake":
+        return None
+    return _CONEXOES[adapter.tipo](credenciais)
+
+
+def descrever_tabela(
+    adapter: Adapter, credenciais: dict, schema: str, table: str, conexao=None
+) -> Dict[str, Any]:
+    """Descreve as colunas de uma tabela (tipos, PK, FK, unique, default, nullable).
+
+    ``conexao`` permite reutilizar uma conexao ja aberta (abrir_conexao) para
+    evitar abrir uma conexao por tabela; quando omitida, abre e fecha a propria.
+    """
     if adapter.tipo == "postgresql":
-        return _descrever_tabela_postgres(credenciais, schema, table)
+        return _descrever_tabela_postgres(credenciais, schema, table, conexao)
     if adapter.tipo == "mysql":
-        return _descrever_tabela_mysql(credenciais, schema, table)
+        return _descrever_tabela_mysql(credenciais, schema, table, conexao)
     if adapter.tipo == "sqlserver":
-        return _descrever_tabela_sqlserver(credenciais, schema, table)
+        return _descrever_tabela_sqlserver(credenciais, schema, table, conexao)
     if adapter.tipo == "clickhouse":
-        return _descrever_tabela_clickhouse(credenciais, schema, table)
+        return _descrever_tabela_clickhouse(credenciais, schema, table, conexao)
     if adapter.tipo == "duckdb":
-        return _descrever_tabela_duckdb(credenciais, schema, table)
+        return _descrever_tabela_duckdb(credenciais, schema, table, conexao)
     if adapter.tipo == "deltalake":
         return _descrever_tabela_deltalake(credenciais, schema, table)
     raise ValueError(f"Adapter desconhecido: {adapter.tipo}")
@@ -221,8 +246,9 @@ def _listar_tabelas_postgres(credenciais: dict) -> List[Dict[str, str]]:
         conn.close()
 
 
-def _descrever_tabela_postgres(credenciais: dict, schema: str, table: str) -> Dict[str, Any]:
-    conn = conectar_postgres(credenciais)
+def _descrever_tabela_postgres(credenciais: dict, schema: str, table: str, conexao=None) -> Dict[str, Any]:
+    proprio = conexao is None
+    conn = conexao or conectar_postgres(credenciais)
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -272,7 +298,8 @@ def _descrever_tabela_postgres(credenciais: dict, schema: str, table: str) -> Di
             for col, ref_schema, ref_table, ref_col in cur.fetchall():
                 fk_por_coluna[col] = (ref_schema, ref_table, ref_col)
     finally:
-        conn.close()
+        if proprio:
+            conn.close()
 
     colunas = []
     for nome, tipo, comprimento, precisao, escala, is_nullable, default in colunas_raw:
@@ -308,8 +335,9 @@ def _listar_tabelas_mysql(credenciais: dict) -> List[Dict[str, str]]:
         conn.close()
 
 
-def _descrever_tabela_mysql(credenciais: dict, schema: str, table: str) -> Dict[str, Any]:
-    conn = conectar_mysql(credenciais)
+def _descrever_tabela_mysql(credenciais: dict, schema: str, table: str, conexao=None) -> Dict[str, Any]:
+    proprio = conexao is None
+    conn = conexao or conectar_mysql(credenciais)
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -352,7 +380,8 @@ def _descrever_tabela_mysql(credenciais: dict, schema: str, table: str) -> Dict[
             for col, ref_schema, ref_table, ref_col in cur.fetchall():
                 fk_por_coluna[col] = (ref_schema, ref_table, ref_col)
     finally:
-        conn.close()
+        if proprio:
+            conn.close()
 
     colunas = []
     for nome, tipo, comprimento, precisao, escala, is_nullable, default in colunas_raw:
@@ -388,8 +417,9 @@ def _listar_tabelas_sqlserver(credenciais: dict) -> List[Dict[str, str]]:
         conn.close()
 
 
-def _descrever_tabela_sqlserver(credenciais: dict, schema: str, table: str) -> Dict[str, Any]:
-    conn = conectar_sqlserver(credenciais)
+def _descrever_tabela_sqlserver(credenciais: dict, schema: str, table: str, conexao=None) -> Dict[str, Any]:
+    proprio = conexao is None
+    conn = conexao or conectar_sqlserver(credenciais)
     objeto = f"{schema}.{table}"
     try:
         cur = conn.cursor()
@@ -440,7 +470,8 @@ def _descrever_tabela_sqlserver(credenciais: dict, schema: str, table: str) -> D
         for col, ref_schema, ref_table, ref_col in cur.fetchall():
             fk_por_coluna[col] = (ref_schema, ref_table, ref_col)
     finally:
-        conn.close()
+        if proprio:
+            conn.close()
 
     colunas = []
     for nome, tipo, comprimento, precisao, escala, is_nullable, default in colunas_raw:
@@ -476,8 +507,9 @@ def _listar_tabelas_clickhouse(credenciais: dict) -> List[Dict[str, str]]:
         conn.close()
 
 
-def _descrever_tabela_clickhouse(credenciais: dict, schema: str, table: str) -> Dict[str, Any]:
-    conn = conectar_clickhouse(credenciais)
+def _descrever_tabela_clickhouse(credenciais: dict, schema: str, table: str, conexao=None) -> Dict[str, Any]:
+    proprio = conexao is None
+    conn = conexao or conectar_clickhouse(credenciais)
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -501,7 +533,8 @@ def _descrever_tabela_clickhouse(credenciais: dict, schema: str, table: str) -> 
             )
             linha_tabela = cur.fetchone()
     finally:
-        conn.close()
+        if proprio:
+            conn.close()
 
     colunas = []
     for nome, tipo, default, eh_pk in colunas_raw:
@@ -550,8 +583,9 @@ def _listar_tabelas_duckdb(credenciais: dict) -> List[Dict[str, str]]:
         conn.close()
 
 
-def _descrever_tabela_duckdb(credenciais: dict, schema: str, table: str) -> Dict[str, Any]:
-    conn = conectar_duckdb(credenciais)
+def _descrever_tabela_duckdb(credenciais: dict, schema: str, table: str, conexao=None) -> Dict[str, Any]:
+    proprio = conexao is None
+    conn = conexao or conectar_duckdb(credenciais)
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -576,7 +610,8 @@ def _descrever_tabela_duckdb(credenciais: dict, schema: str, table: str) -> Dict
             )
             restricoes = cur.fetchall()
     finally:
-        conn.close()
+        if proprio:
+            conn.close()
 
     pks: set = set()
     uniques: set = set()

@@ -431,6 +431,15 @@ def _aspas(sgbd: str, identificador: str) -> str:
 def _linha_coluna(coluna: Dict[str, Any], sgbd: str) -> str:
     nome = _aspas(sgbd, coluna["name"])
     tipo_sql = mapear_tipo(coluna["type"], sgbd)
+    if (
+        sgbd == "clickhouse"
+        and coluna.get("nullable", True)
+        and not coluna.get("primary_key")
+        and "Nullable(" not in tipo_sql
+    ):
+        # No ClickHouse os tipos sao NOT NULL por padrao; colunas nullable
+        # precisam do wrapper Nullable(...) para aceitar NULL na carga.
+        tipo_sql = f"Nullable({tipo_sql})"
     partes = [f"  {nome} {tipo_sql}"]
     if not coluna.get("nullable", True):
         partes.append("NOT NULL")

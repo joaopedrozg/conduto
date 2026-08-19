@@ -316,6 +316,13 @@ Para cargas pesadas no PostgreSQL (ex.: Supabase), o destino pode estourar o
 - Defina `DB_DESTINO_STATEMENT_TIMEOUT` no `.env` (em milissegundos; `0`
   desativa o limite). O pipeline executa `SET statement_timeout` ao conectar.
 
+Para ajustar o tamanho do lote da carga (linhas por lote; padrão `20000`),
+defina `CONDUTO_LOTE` no `.env`:
+
+```bash
+CONDUTO_LOTE=50000
+```
+
 > **Importante:** o `.env` contém credenciais e não deve ser versionado.
 
 ### `main.yml` — manifesto

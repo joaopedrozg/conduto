@@ -7,7 +7,7 @@ import yaml
 
 from conduto.database.adapters import ADAPTERS
 from conduto.database.admin import schema_padrao_sgbd
-from conduto.database.introspect import descrever_tabela
+from conduto.database.introspect import abrir_conexao, descrever_tabela
 from conduto.ddl.ddl_render import ler_env
 from conduto.ui import aviso, console, erro, progresso, tabela
 
@@ -145,37 +145,44 @@ def inferir_colunas(project_dir: Path, tabela_alvo: Optional[str] = None) -> Lis
         return []
 
     inferidas: List[Dict[str, Any]] = []
-    with progresso(len(alvos), "Inferindo colunas das tabelas...") as (barra, tarefa):
-        for alvo in alvos:
-            nome = alvo["table"]
-            try:
-                descricao = descrever_tabela(adapter, credenciais, schema_origem, nome)
-            except Exception as exc:
-                console.print(erro("Falha ao inferir {nome}: {erro}", nome=nome, erro=exc))
-                barra.advance(tarefa)
-                continue
-            if not descricao.get("columns"):
-                console.print(aviso("Tabela {nome} nao retornou colunas; pulando.", nome=nome))
-                barra.advance(tarefa)
-                continue
+    conexao = abrir_conexao(adapter, credenciais)
+    try:
+        with progresso(len(alvos), "Inferindo colunas das tabelas...") as (barra, tarefa):
+            for alvo in alvos:
+                nome = alvo["table"]
+                try:
+                    descricao = descrever_tabela(
+                        adapter, credenciais, schema_origem, nome, conexao=conexao
+                    )
+                except Exception as exc:
+                    console.print(erro("Falha ao inferir {nome}: {erro}", nome=nome, erro=exc))
+                    barra.advance(tarefa)
+                    continue
+                if not descricao.get("columns"):
+                    console.print(aviso("Tabela {nome} nao retornou colunas; pulando.", nome=nome))
+                    barra.advance(tarefa)
+                    continue
 
-            dados = dict(alvo["dados"] or {})
-            dados["table"] = descricao["table"]
-            dados["schema"] = dados.get("schema") or schema_destino
-            dados["description"] = dados.get("description") or f"Tabela {nome}"
-            dados["columns"] = descricao["columns"]
-            dados = _reordenar(dados, ORDEM_SCHEMA)
+                dados = dict(alvo["dados"] or {})
+                dados["table"] = descricao["table"]
+                dados["schema"] = dados.get("schema") or schema_destino
+                dados["description"] = dados.get("description") or f"Tabela {nome}"
+                dados["columns"] = descricao["columns"]
+                dados = _reordenar(dados, ORDEM_SCHEMA)
 
-            caminho = project_dir / alvo["path"]
-            caminho.parent.mkdir(parents=True, exist_ok=True)
-            caminho.write_text(_dump_yaml(dados), encoding="utf-8")
-            _registrar_no_main(project_dir, alvo["path"])
-            inferidas.append({
-                "table": nome,
-                "path": alvo["path"],
-                "columns": len(dados["columns"]),
-            })
-            barra.advance(tarefa)
+                caminho = project_dir / alvo["path"]
+                caminho.parent.mkdir(parents=True, exist_ok=True)
+                caminho.write_text(_dump_yaml(dados), encoding="utf-8")
+                _registrar_no_main(project_dir, alvo["path"])
+                inferidas.append({
+                    "table": nome,
+                    "path": alvo["path"],
+                    "columns": len(dados["columns"]),
+                })
+                barra.advance(tarefa)
+    finally:
+        if conexao is not None:
+            conexao.close()
 
     if inferidas:
         _mostrar_resumo(inferidas)
