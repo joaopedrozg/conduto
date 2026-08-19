@@ -1,7 +1,10 @@
-"""Bump the package version (semver) in pyproject.toml and uv.lock.
+"""Bump/seta a versao do pacote (semver) em pyproject.toml e uv.lock.
 
-Usage: python bump_version.py [patch|minor|major]
-Prints the new version to stdout.
+Uso:
+  python bump_version.py [patch|minor|major]  # bump a partir da versao atual
+  python bump_version.py set X.Y.Z            # define uma versao exata
+
+Imprime a nova versao no stdout.
 """
 
 import re
@@ -10,9 +13,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
+_SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+
 
 def bump(version: str, part: str) -> str:
-    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version)
+    match = _SEMVER.fullmatch(version)
     if not match:
         sys.exit(f"Versao atual nao e semver simples (esperado X.Y.Z): {version!r}")
     major, minor, patch = (int(group) for group in match.groups())
@@ -22,21 +27,17 @@ def bump(version: str, part: str) -> str:
         return f"{major}.{minor + 1}.0"
     if part == "patch":
         return f"{major}.{minor}.{patch + 1}"
-    sys.exit(f"Tipo de bump invalido: {part!r} (use patch, minor ou major)")
+    sys.exit(f"Tipo de bump invalido: {part!r} (use patch, minor, major ou set)")
 
 
-def main() -> None:
-    part = sys.argv[1] if len(sys.argv) > 1 else "patch"
-
+def escrever_versao(new_version: str) -> None:
+    """Escreve a versao em pyproject.toml e no entry 'conduto' do uv.lock."""
     pyproject = ROOT / "pyproject.toml"
     lock = ROOT / "uv.lock"
 
     project_text = pyproject.read_text(encoding="utf-8").replace("\r\n", "\n")
-    match = re.search(r'(?m)^version = "([^"]+)"', project_text)
-    if not match:
+    if not re.search(r'(?m)^version = "([^"]+)"', project_text):
         sys.exit("Nao encontrei 'version' no pyproject.toml")
-    new_version = bump(match.group(1), part)
-
     pyproject.write_text(
         re.sub(
             r'(?m)^version = "[^"]+"',
@@ -48,9 +49,7 @@ def main() -> None:
     )
 
     lock_text = lock.read_text(encoding="utf-8").replace("\r\n", "\n")
-    lock_pattern = re.compile(
-        r'(?m)^(\[\[package\]\]\nname = "conduto"\n)version = "[^"]+"'
-    )
+    lock_pattern = re.compile(r'(?m)^(\[\[package\]\]\nname = "conduto"\n)version = "[^"]+"')
     if not lock_pattern.search(lock_text):
         sys.exit("Nao encontrei o entry 'conduto' no uv.lock")
     lock.write_text(
@@ -62,6 +61,27 @@ def main() -> None:
         encoding="utf-8",
     )
 
+
+def main() -> None:
+    args = sys.argv[1:]
+    part = args[0] if args else "patch"
+
+    pyproject = ROOT / "pyproject.toml"
+    match = re.search(r'(?m)^version = "([^"]+)"', pyproject.read_text(encoding="utf-8"))
+    if not match:
+        sys.exit("Nao encontrei 'version' no pyproject.toml")
+    current = match.group(1)
+
+    if part == "set":
+        if len(args) < 2:
+            sys.exit("Uso: bump_version.py set X.Y.Z")
+        new_version = args[1]
+        if not _SEMVER.fullmatch(new_version):
+            sys.exit(f"Versao invalida (esperado X.Y.Z): {new_version!r}")
+    else:
+        new_version = bump(current, part)
+
+    escrever_versao(new_version)
     print(new_version)
 
 

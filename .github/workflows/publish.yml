@@ -3,8 +3,6 @@ name: Publish to PyPI
 on:
   push:
     branches: [main]
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       bump:
@@ -20,7 +18,7 @@ permissions:
   id-token: write
   contents: write
 
-# Serializa os runs: o push do commit de bump aguarda o run do merge terminar.
+# Serializa os runs de publicacao (varios merges rapidos nao concorrem).
 concurrency:
   group: publish-conduto
   cancel-in-progress: false
@@ -42,38 +40,21 @@ jobs:
             PART="${{ github.event.inputs.bump }}"
           fi
           python3 .github/scripts/next_release.py "$PART" | tee "$RUNNER_TEMP/release.txt"
-          grep -E '^(version|bump|published)=' "$RUNNER_TEMP/release.txt" >> "$GITHUB_OUTPUT"
-
-      - name: Commit bump
-        if: steps.decide.outputs.bump == 'yes'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml uv.lock
-          git commit -m "chore: bump version to ${{ steps.decide.outputs.version }}"
-          git push origin main
+          grep -E '^version=' "$RUNNER_TEMP/release.txt" >> "$GITHUB_OUTPUT"
 
       - name: Build package
-        if: steps.decide.outputs.published != 'true'
         run: uv build
 
       - name: Publish to PyPI
-        if: steps.decide.outputs.published != 'true'
         run: uv publish
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.UV_PUBLISH_TOKEN }}
 
       - name: Tag release
-        if: steps.decide.outputs.published != 'true'
         run: |
           git tag "v${{ steps.decide.outputs.version }}"
           git push origin "v${{ steps.decide.outputs.version }}"
 
       - name: Summary
-        if: always()
         run: |
-          if [ "${{ steps.decide.outputs.published }}" = "true" ]; then
-            echo "Versao ${{ steps.decide.outputs.version }} ja existe no PyPI; publish pulado." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "Versao ${{ steps.decide.outputs.version }} publicada no PyPI." >> "$GITHUB_STEP_SUMMARY"
-          fi
+          echo "Versao ${{ steps.decide.outputs.version }} publicada no PyPI." >> "$GITHUB_STEP_SUMMARY"
