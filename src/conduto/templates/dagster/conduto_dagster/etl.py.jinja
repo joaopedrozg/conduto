@@ -491,6 +491,16 @@ def _bloco_copy(item: Sequence) -> bytes:
     return ("\n".join(linhas) + "\n").encode("utf-8")
 
 
+def _tabela_vazia(conn, destino: str) -> bool:
+    """True quando a tabela de destino ainda nao tem registros."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT 1 FROM {destino} LIMIT 1")
+            return cur.fetchone() is None
+    except Exception:
+        return True
+
+
 def _copiar_postgres(conn, destino: str, fila, context=None) -> int:
     """Grava no PostgreSQL via COPY FROM STDIN em blocos pre-serializados.
 
@@ -820,28 +830,34 @@ def carregar_tabela(tabela: Dict[str, Any], context=None) -> int:
         if tipo_origem == "postgresql" and tipo_destino == "postgresql":
             # Caminho mais rapido para cargas full: a origem serializa (COPY TO
             # STDOUT) e o destino consome os bytes direto (COPY FROM STDIN).
-            # Quando a carga e incremental e a tabela tem PK, a regra de conflito
-            # precisa ser tratada com UPSERT para nao estourar UniqueViolation.
-            if modo == "incremental" and coluna_inc and [
-                c["name"] for c in tabela.get("columns", []) if c.get("primary_key")
-            ]:
-                lote = int(env.get("CONDUTO_LOTE") or _LOTE)
-                fila = queue.Queue(maxsize=8)
-                thread = threading.Thread(
-                    target=_produtor,
-                    args=(conn_origem, sql, params, fila, lote),
-                    daemon=True,
-                )
-                thread.start()
-                try:
-                    inseridos = _copiar_postgres_upsert(conn_destino, destino, tabela, fila, context)
-                finally:
-                    while True:
-                        try:
-                            fila.get_nowait()
-                        except queue.Empty:
-                            break
-                    thread.join(timeout=30)
+            # Se a tabela de destino estiver vazia, o COPY e mais rapido e seguro;
+            # se ela ja tiver dados, preferimos UPSERT por PK para evitar
+            # UniqueViolation em cargas incrementais repetidas.
+            tem_pk = bool([c["name"] for c in tabela.get("columns", []) if c.get("primary_key")])
+            if modo == "incremental" and coluna_inc and tem_pk:
+                tabela_vazia = _tabela_vazia(conn_destino, destino)
+                if tabela_vazia:
+                    inseridos = _carregar_pg_para_pg(
+                        conn_origem, conn_destino, destino, colunas, sql, params, context,
+                    )
+                else:
+                    lote = int(env.get("CONDUTO_LOTE") or _LOTE)
+                    fila = queue.Queue(maxsize=8)
+                    thread = threading.Thread(
+                        target=_produtor,
+                        args=(conn_origem, sql, params, fila, lote),
+                        daemon=True,
+                    )
+                    thread.start()
+                    try:
+                        inseridos = _copiar_postgres_upsert(conn_destino, destino, tabela, fila, context)
+                    finally:
+                        while True:
+                            try:
+                                fila.get_nowait()
+                            except queue.Empty:
+                                break
+                        thread.join(timeout=30)
             else:
                 inseridos = _carregar_pg_para_pg(
                     conn_origem, conn_destino, destino, colunas, sql, params, context,
