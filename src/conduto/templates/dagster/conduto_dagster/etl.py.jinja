@@ -616,13 +616,18 @@ def _carregar_pg_para_pg(
     return total
 
 
-def _copiar(conn, tipo: str, destino: str, fila, context=None) -> int:
+def _copiar(conn, tipo: str, destino: str, fila, context=None, tabela: Optional[Dict[str, Any]] = None) -> int:
     """Consome a fila de lotes da origem e grava no destino.
 
-    No PostgreSQL usa COPY FROM STDIN em blocos; no ClickHouse usa o INSERT
-    nativo em lote; no Delta Lake usa write_deltalake; nos demais, INSERT em lote.
+    No PostgreSQL usa COPY FROM STDIN em blocos (tabela vazia) ou UPSERT por PK
+    (tabela com dados, evitando UniqueViolation em cargas incrementais); no
+    ClickHouse usa o INSERT nativo em lote; no Delta Lake usa write_deltalake;
+    nos demais, INSERT em lote.
     """
     if tipo == "postgresql":
+        pks = [c["name"] for c in (tabela or {}).get("columns", []) if c.get("primary_key")]
+        if pks and not _tabela_vazia(conn, destino):
+            return _copiar_postgres_upsert(conn, destino, tabela, fila, context)
         return _copiar_postgres(conn, destino, fila, context)
     if tipo == "clickhouse":
         return _copiar_clickhouse(conn, destino, fila, context)
@@ -878,7 +883,7 @@ def carregar_tabela(tabela: Dict[str, Any], context=None) -> int:
             )
             thread.start()
             try:
-                inseridos = _copiar(conn_destino, tipo_destino, destino, fila, context)
+                inseridos = _copiar(conn_destino, tipo_destino, destino, fila, context, tabela)
             finally:
                 while True:
                     try:
