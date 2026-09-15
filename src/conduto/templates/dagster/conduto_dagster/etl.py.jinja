@@ -522,6 +522,60 @@ def _copiar_postgres(conn, destino: str, fila, context=None) -> int:
     return total
 
 
+def _copiar_postgres_upsert(conn, destino: str, tabela: Dict[str, Any], fila, context=None) -> int:
+    """Grava em PostgreSQL com UPSERT por PK para evitar duplicatas em cargas incrementais.
+
+    COPY FROM STDIN nao suporta ON CONFLICT; quando a carga incremental reaproveita
+    a mesma PK (execucao repetida ou watermark impreciso), o fallback aqui faz a
+    insercao em lote com ``INSERT ... ON CONFLICT (...) DO UPDATE``.
+    """
+    primeiro = fila.get()
+    if isinstance(primeiro, Exception):
+        raise primeiro
+    colunas = list(primeiro)
+    if not colunas:
+        return 0
+
+    pks = [c["name"] for c in tabela.get("columns", []) if c.get("primary_key")]
+    if not pks:
+        return _copiar_postgres(conn, destino, fila, context)
+
+    cols_sql = ", ".join(_aspas("postgresql", c) for c in colunas)
+    conflict_sql = ", ".join(_aspas("postgresql", c) for c in pks)
+    placeholders = ", ".join(["%s"] * len(colunas))
+    campos_update = [
+        f"{_aspas('postgresql', c)} = EXCLUDED.{_aspas('postgresql', c)}"
+        for c in colunas if c not in pks
+    ]
+    if campos_update:
+        on_conflict = f"ON CONFLICT ({conflict_sql}) DO UPDATE SET {', '.join(campos_update)}"
+    else:
+        on_conflict = f"ON CONFLICT ({conflict_sql}) DO NOTHING"
+
+    sql = (
+        f"INSERT INTO {destino} ({cols_sql}) VALUES ({placeholders}) "
+        f"{on_conflict}"
+    )
+
+    total = 0
+    try:
+        with conn.cursor() as cur:
+            while True:
+                item = fila.get()
+                if item is _FIM:
+                    break
+                if isinstance(item, Exception):
+                    raise item
+                linhas = [tuple(_serializar(v) for v in linha) for linha in item]
+                cur.executemany(sql, linhas)
+                total += len(linhas)
+                if context is not None and total % _PROGRESSO == 0:
+                    context.log.info(f"Inseridas {total} linha(s) em {destino}.")
+    finally:
+        conn.commit()
+    return total
+
+
 def _carregar_pg_para_pg(
     conn_origem, conn_destino, destino: str, colunas, sql: str, params, context=None
 ) -> int:
@@ -764,12 +818,34 @@ def carregar_tabela(tabela: Dict[str, Any], context=None) -> int:
 
         inicio = time.monotonic()
         if tipo_origem == "postgresql" and tipo_destino == "postgresql":
-            # Caminho mais rapido: a origem serializa (COPY TO STDOUT) e o
-            # destino consome os bytes direto (COPY FROM STDIN), sem conversao
-            # de linha por linha em Python.
-            inseridos = _carregar_pg_para_pg(
-                conn_origem, conn_destino, destino, colunas, sql, params, context,
-            )
+            # Caminho mais rapido para cargas full: a origem serializa (COPY TO
+            # STDOUT) e o destino consome os bytes direto (COPY FROM STDIN).
+            # Quando a carga e incremental e a tabela tem PK, a regra de conflito
+            # precisa ser tratada com UPSERT para nao estourar UniqueViolation.
+            if modo == "incremental" and coluna_inc and [
+                c["name"] for c in tabela.get("columns", []) if c.get("primary_key")
+            ]:
+                lote = int(env.get("CONDUTO_LOTE") or _LOTE)
+                fila = queue.Queue(maxsize=8)
+                thread = threading.Thread(
+                    target=_produtor,
+                    args=(conn_origem, sql, params, fila, lote),
+                    daemon=True,
+                )
+                thread.start()
+                try:
+                    inseridos = _copiar_postgres_upsert(conn_destino, destino, tabela, fila, context)
+                finally:
+                    while True:
+                        try:
+                            fila.get_nowait()
+                        except queue.Empty:
+                            break
+                    thread.join(timeout=30)
+            else:
+                inseridos = _carregar_pg_para_pg(
+                    conn_origem, conn_destino, destino, colunas, sql, params, context,
+                )
         else:
             lote = int(env.get("CONDUTO_LOTE") or _LOTE)
             fila = queue.Queue(maxsize=8)
