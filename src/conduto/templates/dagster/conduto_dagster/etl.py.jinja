@@ -19,7 +19,7 @@ import queue
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Set
 
 import yaml
 
@@ -334,6 +334,17 @@ def _sql_amostra(tipo: str, origem: str) -> str:
     return f"SELECT * FROM {origem} LIMIT 0"
 
 
+def _colunas_permitidas(tabela: Optional[Dict[str, Any]]) -> Optional[Set[str]]:
+    """Nomes de coluna definidos no schema; None se a tabela nao restringe colunas.
+
+    Usado para ignorar colunas removidas do schema mas ainda presentes na
+    tabela de origem (evita erro de coluna desconhecida no destino).
+    """
+    definicoes = (tabela or {}).get("columns") or []
+    nomes = {c["name"] for c in definicoes if c.get("name")}
+    return nomes or None
+
+
 def _colunas_origem(conn, tipo: str, origem: str) -> List[str]:
     if tipo == "deltalake":
         from deltalake import DeltaTable
@@ -376,7 +387,9 @@ def _produtor(conn, sql: str, params: Optional[Sequence], fila, lote: int = _LOT
         fila.put(_FIM)
 
 
-def _produtor_delta(conn, tabela_nome: str, fila, lote: int = _LOTE) -> None:
+def _produtor_delta(
+    conn, tabela_nome: str, fila, lote: int = _LOTE, colunas_permitidas: Optional[Set[str]] = None,
+) -> None:
     """Le as linhas de uma tabela Delta (origem) em lotes e coloca na fila."""
     try:
         from deltalake import DeltaTable
@@ -386,9 +399,11 @@ def _produtor_delta(conn, tabela_nome: str, fila, lote: int = _LOTE) -> None:
             storage_options=conn.storage_options or None,
         )
         colunas = [campo.name for campo in tabela_delta.schema().fields]
+        if colunas_permitidas is not None:
+            colunas = [c for c in colunas if c in colunas_permitidas]
         fila.put(colunas)
         for bloco in tabela_delta.to_pyarrow_table().to_batches(max_chunksize=lote):
-            fila.put([list(linha.values()) for linha in bloco.to_pylist()])
+            fila.put([[linha[c] for c in colunas] for linha in bloco.to_pylist()])
     except Exception as erro:
         fila.put(erro)
     finally:
@@ -809,6 +824,12 @@ def carregar_tabela(tabela: Dict[str, Any], context=None) -> int:
         if not colunas:
             return 0
 
+        permitidas = _colunas_permitidas(tabela)
+        if permitidas is not None:
+            colunas = [c for c in colunas if c in permitidas]
+            if not colunas:
+                return 0
+
         if truncar or modo == "full" or forcar_full:
             _truncar(conn_destino, tipo_destino, destino)
 
@@ -872,7 +893,7 @@ def carregar_tabela(tabela: Dict[str, Any], context=None) -> int:
             fila = queue.Queue(maxsize=8)
             if tipo_origem == "deltalake":
                 alvo_produtor = _produtor_delta
-                args_produtor = (conn_origem, nome, fila, lote)
+                args_produtor = (conn_origem, nome, fila, lote, permitidas)
             else:
                 alvo_produtor = _produtor
                 args_produtor = (conn_origem, sql, params, fila, lote)
