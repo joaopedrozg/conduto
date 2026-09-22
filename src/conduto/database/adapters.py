@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Tuple
 
+from conduto.database.drivers import importar_driver
+
 
 @dataclass(frozen=True)
 class Adapter:
@@ -82,7 +84,7 @@ ADAPTERS: Dict[str, Adapter] = {
 
 
 def conectar_postgres(credenciais: dict, database: str | None = None):
-    import psycopg
+    psycopg = importar_driver("psycopg")
 
     return psycopg.connect(
         host=credenciais["host"],
@@ -95,7 +97,7 @@ def conectar_postgres(credenciais: dict, database: str | None = None):
 
 
 def conectar_mysql(credenciais: dict, database: str | None = None):
-    import pymysql
+    pymysql = importar_driver("pymysql")
 
     return pymysql.connect(
         host=credenciais["host"],
@@ -108,7 +110,7 @@ def conectar_mysql(credenciais: dict, database: str | None = None):
 
 
 def conectar_sqlserver(credenciais: dict, database: str | None = None):
-    import pyodbc
+    pyodbc = importar_driver("pyodbc")
 
     opcoes = [
         "ODBC Driver 18 for SQL Server",
@@ -130,7 +132,7 @@ def conectar_sqlserver(credenciais: dict, database: str | None = None):
 
 def conectar_clickhouse(credenciais: dict, database: str | None = None):
     """Abre uma conexao ClickHouse (HTTP) com uma interface parecida com DBAPI."""
-    import clickhouse_connect
+    clickhouse_connect = importar_driver("clickhouse_connect")
 
     client = clickhouse_connect.get_client(
         host=credenciais["host"],
@@ -145,7 +147,7 @@ def conectar_clickhouse(credenciais: dict, database: str | None = None):
 
 def conectar_duckdb(credenciais: dict, database: str | None = None):
     """Abre um arquivo DuckDB (embedded). O caminho vem de HOST ou DATABASE."""
-    import duckdb
+    duckdb = importar_driver("duckdb")
 
     caminho = database or credenciais.get("host") or credenciais.get("database")
     if not caminho or str(caminho).strip() in (":memory:", "memory", ""):
@@ -233,7 +235,7 @@ def delta_eh_s3(host: str) -> bool:
 
 def delta_cliente_s3(credenciais: dict):
     """Cliente boto3 para S3/MinIO a partir das credenciais do conduto."""
-    import boto3
+    boto3 = importar_driver("boto3")
 
     host = credenciais["host"]
     if host.startswith("s3://"):

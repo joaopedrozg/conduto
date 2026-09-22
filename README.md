@@ -27,36 +27,40 @@ CLI para criar projetos de migração/ELT de dados: gera o `.env` com as credenc
 - Comando `conduto schedules` para (re)gerar os schedules e o código Dagster de um projeto existente
 - Comando `conduto docs`: sobe um servidor web local com a documentação da estrutura do projeto (visão geral, árvore de arquivos, conexões, schemas, schedules, DDL e ambiente)
 - Credenciais visíveis no prompt durante o preenchimento — só vão para o `.env`
-- Instalação da lib oficial do SGBD escolhido (`psycopg[binary]`, `pymysql`, `pyodbc`)
+- Instalação da lib oficial do SGBD escolhido (`psycopg[binary]`, `pymysql`, `pyodbc`) no projeto gerado — na CLI, os drivers são extras por SGBD (`conduto[all]` traz todos)
 - Download/instalação automática do ODBC Driver for SQL Server (Windows, Linux e macOS)
 - Feedback visual com `rich` e `questionary`: cores semânticas (sucesso, aviso, erro, info), tabelas de resumo e widgets de carregamento (spinner e barra de progresso) nas operações demoradas
 - Detecção automática do idioma da máquina (português ou inglês) com override por comando (`--lang`) ou variável de ambiente (`CONDUTO_LANG`)
 
-## Testando com Docker
-
-Há um `docker-compose.yml` na raiz com os bancos usados para testar a lib:
-PostgreSQL, MySQL e SQL Server (já suportados) + ClickHouse e DuckDB
-(analíticos) e MinIO com tabelas Delta Lake (via `deltalake`).
-
-```bash
-docker compose up -d --build
-```
-
-Credenciais, o que é criado e exemplos de uso no
-[`docker/README.md`](docker/README.md).
 ## Instalação
 
-```bash
-pip install conduto
-```
-
-Ou, para usar sem sujar o ambiente atual:
+O pacote base instala só a CLI (Typer, rich, questionary, Jinja2 e PyYAML).
+Os drivers de banco vêm como **extras por SGBD** — instale só o que você usa:
 
 ```bash
-uv tool install conduto
+pip install "conduto[postgresql]"   # psycopg
+pip install "conduto[mysql]"        # pymysql
+pip install "conduto[sqlserver]"    # pyodbc
+pip install "conduto[clickhouse]"   # clickhouse-connect
+pip install "conduto[duckdb]"       # duckdb
+pip install "conduto[deltalake]"    # deltalake, pyarrow e boto3
+
+pip install "conduto[all]"          # todos os SGBD
 ```
 
-## Idioma
+O mesmo vale para `uv tool install "conduto[all]"`:
+
+```bash
+uv tool install "conduto[all]"
+```
+
+> Sem o extra, a CLI funciona normalmente (`conduto --help`, `ddl`, `schedules`,
+> `docs`...). Ao escolher um SGBD cujo driver falta, o conduto avisa e diz
+> exatamente qual extra instalar. Os projetos gerados pelo `conduto init` seguem
+> recebendo o driver do SGBD no `uv add` deles — o extra é só para o ambiente
+> da CLI.
+
+### Idioma
 
 O Conduto detecta o idioma da máquina automaticamente (português por padrão,
 com suporte a inglês) e usa essa preferência em todas as mensagens, prompts,
@@ -113,7 +117,7 @@ conduto init meu_projeto
 
 O comando pergunta interativamente:
 
-1. SGBD de origem (PostgreSQL, MySQL ou SQL Server) — os defaults de porta e usuário mudam conforme o SGBD
+1. SGBD de origem (PostgreSQL, MySQL, SQL Server, ClickHouse, DuckDB ou Delta Lake) — os defaults de porta e usuário mudam conforme o SGBD
 2. Credenciais do servidor de origem (host, porta, usuário e senha) — sem precisar digitar o banco
 3. Teste de conexão — se falhar, escolha entre digitar novamente ou continuar mesmo assim
 4. Lista de bancos do servidor de origem — escolha um
@@ -124,7 +128,7 @@ O comando pergunta interativamente:
 9. Gerenciamento de schedules — pergunta se você quer gerar automaticamente o schedule de cada tabela (padrão: hora em hora) e o código Dagster correspondente
 10. Servidor Dagster — pergunta se você quer subir o servidor agora (`uv run dagster dev`) e gera os scripts `run_dagster.ps1`/`run_dagster.sh`
 
-**Dentro de um projeto uv?** Se o diretório atual já tem `pyproject.toml` (por exemplo, após `uv add conduto`), o conduto se adapta: gera `.env`, `main.yml` e `schemas/` direto no projeto atual e adiciona só as dependências que faltam — sem criar subpasta nem rodar `uv init`. **Dentro de um projeto uv?** Se o diretório atual já tem `pyproject.toml` (por exemplo, após `uv add conduto`), o conduto se adapta: gera `.env`, `main.yml` e `schemas/` direto no projeto atual e adiciona só as dependências que faltam — sem criar subpasta nem rodar `uv init`. Nesse caso, use `uv run conduto init` (o nome do projeto vira opcional).
+**Dentro de um projeto uv?** Se o diretório atual já tem `pyproject.toml` (por exemplo, após `uv add conduto`), o conduto se adapta: gera `.env`, `main.yml` e `schemas/` direto no projeto atual e adiciona só as dependências que faltam — sem criar subpasta nem rodar `uv init`. Nesse caso, use `uv run conduto init` (o nome do projeto vira opcional).
 
 ### Documentação web
 
@@ -384,7 +388,7 @@ uv init --no-readme --bare   # sem pasta src/
 uv add pyyaml jinja2 polars dagster dagster-webserver
 ```
 
-O projeto é inicializado sem a pasta `src/`, pois os scripts e o código Dagster ficam na raiz. E também a lib oficial do SGBD escolhido: `psycopg[binary]` (PostgreSQL), `pymysql` (MySQL) ou `pyodbc` (SQL Server).
+O projeto é inicializado sem a pasta `src/`, pois os scripts e o código Dagster ficam na raiz. E também a lib oficial do SGBD escolhido: `psycopg[binary]` (PostgreSQL), `pymysql` (MySQL) ou `pyodbc` (SQL Server). Essa dependência é do **projeto gerado**, não da CLI — na CLI os drivers são extras (`pip install "conduto[all]"`).
 
 ## Como funciona
 
@@ -404,7 +408,8 @@ O projeto é inicializado sem a pasta `src/`, pois os scripts e o código Dagste
 ## Desenvolvimento
 
 ```bash
-uv sync
+uv sync --all-extras   # instala o projeto + drivers de todos os SGBD + dev (pytest)
+uv run pytest -q       # roda os testes
 uv build
 uv publish
 ```

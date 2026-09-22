@@ -1,7 +1,6 @@
 """Geração automática de schedules: inferência incremental e chave ``schedule`` nos schemas."""
 
 from pathlib import Path
-from typing import Any
 from typing import Any, Dict, List, Optional
 
 import yaml

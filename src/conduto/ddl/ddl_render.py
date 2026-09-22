@@ -18,6 +18,7 @@ from conduto.database.adapters import (
     delta_storage_options,
 )
 from conduto.database.admin import schema_padrao_sgbd
+from conduto.database.drivers import importar_driver
 from conduto.database.particularidades import PARTICULARIDADES
 
 console = Console()
@@ -682,8 +683,8 @@ def executar_ddl(sgbd: str, credenciais: dict, comandos: List[str]) -> List[str]
 
 def _executar_ddl_deltalake(credenciais: dict, comandos: List[str]) -> List[str]:
     """Cria as tabelas Delta a partir dos CREATE TABLE gerados pelo conduto."""
-    import pyarrow as pa
-    from deltalake import write_deltalake
+    pa = importar_driver("pyarrow")
+    write_deltalake = importar_driver("deltalake").write_deltalake
 
     base = delta_base(credenciais)
     opcoes = delta_storage_options(credenciais) or None
@@ -746,7 +747,7 @@ def _parsear_create_table(comando: str):
 
 def _tipo_arrow(tipo: str):
     """Mapeia o tipo do DDL do conduto para pyarrow (criacao de tabela Delta)."""
-    import pyarrow as pa
+    pa = importar_driver("pyarrow")
 
     t = tipo.strip().lower()
     if t in ("text", "varchar", "char", "string", "uuid", "json", "enum", "xml"):
