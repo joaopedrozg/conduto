@@ -58,10 +58,3 @@ where = ["src"]
 [tool.setuptools.package-data]
 conduto = ["templates/**/*.jinja"]
 
-[tool.uv.workspace]
-members = [
-    "teste/meuteste",
-    "teste/meu_teste",
-    "teste/meu_etl",
-]
-
