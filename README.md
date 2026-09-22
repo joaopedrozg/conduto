@@ -32,18 +32,6 @@ CLI para criar projetos de migração/ELT de dados: gera o `.env` com as credenc
 - Feedback visual com `rich` e `questionary`: cores semânticas (sucesso, aviso, erro, info), tabelas de resumo e widgets de carregamento (spinner e barra de progresso) nas operações demoradas
 - Detecção automática do idioma da máquina (português ou inglês) com override por comando (`--lang`) ou variável de ambiente (`CONDUTO_LANG`)
 
-## Testando com Docker
-
-Há um `docker-compose.yml` na raiz com os bancos usados para testar a lib:
-PostgreSQL, MySQL e SQL Server (já suportados) + ClickHouse e DuckDB
-(analíticos) e MinIO com tabelas Delta Lake (via `deltalake`).
-
-```bash
-docker compose up -d --build
-```
-
-Credenciais, o que é criado e exemplos de uso no
-[`docker/README.md`](docker/README.md).
 ## Instalação
 
 ```bash
@@ -113,7 +101,7 @@ conduto init meu_projeto
 
 O comando pergunta interativamente:
 
-1. SGBD de origem (PostgreSQL, MySQL ou SQL Server) — os defaults de porta e usuário mudam conforme o SGBD
+1. SGBD de origem (PostgreSQL, MySQL, SQL Server, ClickHouse, DuckDB ou Delta Lake) — os defaults de porta e usuário mudam conforme o SGBD
 2. Credenciais do servidor de origem (host, porta, usuário e senha) — sem precisar digitar o banco
 3. Teste de conexão — se falhar, escolha entre digitar novamente ou continuar mesmo assim
 4. Lista de bancos do servidor de origem — escolha um
@@ -124,7 +112,7 @@ O comando pergunta interativamente:
 9. Gerenciamento de schedules — pergunta se você quer gerar automaticamente o schedule de cada tabela (padrão: hora em hora) e o código Dagster correspondente
 10. Servidor Dagster — pergunta se você quer subir o servidor agora (`uv run dagster dev`) e gera os scripts `run_dagster.ps1`/`run_dagster.sh`
 
-**Dentro de um projeto uv?** Se o diretório atual já tem `pyproject.toml` (por exemplo, após `uv add conduto`), o conduto se adapta: gera `.env`, `main.yml` e `schemas/` direto no projeto atual e adiciona só as dependências que faltam — sem criar subpasta nem rodar `uv init`. **Dentro de um projeto uv?** Se o diretório atual já tem `pyproject.toml` (por exemplo, após `uv add conduto`), o conduto se adapta: gera `.env`, `main.yml` e `schemas/` direto no projeto atual e adiciona só as dependências que faltam — sem criar subpasta nem rodar `uv init`. Nesse caso, use `uv run conduto init` (o nome do projeto vira opcional).
+**Dentro de um projeto uv?** Se o diretório atual já tem `pyproject.toml` (por exemplo, após `uv add conduto`), o conduto se adapta: gera `.env`, `main.yml` e `schemas/` direto no projeto atual e adiciona só as dependências que faltam — sem criar subpasta nem rodar `uv init`. Nesse caso, use `uv run conduto init` (o nome do projeto vira opcional).
 
 ### Documentação web
 
@@ -404,7 +392,8 @@ O projeto é inicializado sem a pasta `src/`, pois os scripts e o código Dagste
 ## Desenvolvimento
 
 ```bash
-uv sync
+uv sync          # instala o projeto + dependências de dev (pytest)
+uv run pytest -q # roda os testes
 uv build
 uv publish
 ```
