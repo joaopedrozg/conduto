@@ -143,6 +143,8 @@ def inferir_tipo(data_type: Optional[str], comprimento: Optional[int] = None,
         return "enum"
     if t == "xml":
         return "xml"
+    if t in ("hierarchyid", "geometry", "geography"):
+        return "text"
 
     # Tipos compostos: ClickHouse, DuckDB e Delta (Arrow)
     if t.startswith(("nullable(", "lowcardinality(")):

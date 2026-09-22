@@ -14,6 +14,7 @@ Edite à vontade: o restante do pipeline lê este arquivo em tempo de execução
 
 from __future__ import annotations
 
+import datetime
 import json
 import queue
 import threading
@@ -358,6 +359,23 @@ def _colunas_origem(conn, tipo: str, origem: str) -> List[str]:
         return [descricao[0] for descricao in cur.description]
 
 
+def _cols_select_sqlserver(conn, origem: str, colunas: List[str]) -> List[str]:
+    """Gera as expressoes SELECT com CAST para tipos que o pyodbc nao suporta
+    (tipos com codigo ODBC negativo, como hierarchyid, geometry e geography)."""
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT TOP (0) * FROM {origem}")
+        descricoes = {d[0]: d[1] for d in cur.description}
+    resultado = []
+    for c in colunas:
+        tipo = descricoes.get(c, 0)
+        col = _aspas("sqlserver", c)
+        if isinstance(tipo, int) and tipo < 0:
+            resultado.append(f"CAST({col} AS NVARCHAR(MAX)) AS {col}")
+        else:
+            resultado.append(col)
+    return resultado
+
+
 def _executar(conn, sql: str, params: Optional[Sequence] = None) -> None:
     with conn.cursor() as cur:
         cur.execute(sql, params or ())
@@ -464,12 +482,18 @@ def _sanitizar(valor: Any) -> Any:
 
 
 def _serializar(valor: Any) -> Any:
-    """Converte dicts/listas para JSON antes de gravar no banco."""
+    """Converte dicts/listas para JSON e tipos desconhecidos para string antes de gravar no banco."""
     if isinstance(valor, (dict, list)):
         return json.dumps(_sanitizar(valor), ensure_ascii=False)
-    if isinstance(valor, str) and "\x00" in valor:
-        return valor.replace("\x00", "")
-    return valor
+    if isinstance(valor, str):
+        return valor.replace("\x00", "") if "\x00" in valor else valor
+    if isinstance(valor, datetime.datetime):
+        return valor
+    if isinstance(valor, datetime.date):
+        return valor.isoformat()
+    if isinstance(valor, (int, float, bool, type(None), bytes)):
+        return valor
+    return str(valor)
 
 
 _PROGRESSO = 20000
@@ -833,7 +857,11 @@ def carregar_tabela(tabela: Dict[str, Any], context=None) -> int:
         if truncar or modo == "full" or forcar_full:
             _truncar(conn_destino, tipo_destino, destino)
 
-        cols_select = ", ".join(_aspas(tipo_origem, c) for c in colunas)
+        if tipo_origem == "sqlserver":
+            partes_select = _cols_select_sqlserver(conn_origem, origem, colunas)
+        else:
+            partes_select = [_aspas(tipo_origem, c) for c in colunas]
+        cols_select = ", ".join(partes_select)
 
         if forcar_full or modo == "full" or not coluna_inc:
             sql = f"SELECT {cols_select} FROM {origem}"
