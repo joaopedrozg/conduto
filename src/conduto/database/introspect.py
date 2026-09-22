@@ -433,7 +433,8 @@ def _descrever_tabela_sqlserver(credenciais: dict, schema: str, table: str, cone
                    c.precision, c.scale, c.is_nullable, dc.definition
             FROM sys.columns c
             JOIN sys.types ty ON c.user_type_id = ty.user_type_id
-            LEFT JOIN sys.types tyb ON c.system_type_id = tyb.system_type_id AND tyb.is_user_defined = 0
+            LEFT JOIN sys.types tyb ON c.system_type_id = tyb.system_type_id
+                AND tyb.is_user_defined = 0 AND tyb.user_type_id = tyb.system_type_id
             LEFT JOIN sys.default_constraints dc ON c.default_object_id = dc.object_id
             WHERE c.object_id = OBJECT_ID(?)
             ORDER BY c.column_id

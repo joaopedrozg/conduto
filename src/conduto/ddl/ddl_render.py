@@ -299,6 +299,9 @@ def mapear_tipo(tipo: str, sgbd: str) -> str:
         novo = mapeamento.get(base)
         if novo is None:
             return _VARCHAR_SEM_TAMANHO.get(sgbd, "varchar")
+        if sgbd == "clickhouse" and novo == "String":
+            # ClickHouse String nao aceita tamanho (so FixedString aceita).
+            return "String"
         if "(" in novo:
             return novo
         return f"{novo}({correspondencia.group(2)})"
