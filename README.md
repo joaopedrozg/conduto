@@ -2,7 +2,7 @@
 
 **O duto que leva seus dados da origem ao destino.**
 
-CLI para criar projetos de migração/ELT de dados: gera o `.env` com as credenciais dos bancos, o manifesto `main.yml`, os schemas YAML das tabelas e configura o ambiente com `uv` (`pyyaml`, `jinja2`, `polars`, `dagster`, `dagster-webserver`).
+CLI para criar projetos de migração/ELT de dados: gera o `.env` com as credenciais dos bancos, o manifesto `main.yml`, os schemas YAML das tabelas e configura o ambiente com `uv` (`pyyaml`, `jinja2`, `dagster`, `dagster-webserver`).
 
 **Repositório:** [github.com/joaopedrozg/conduto](https://github.com/joaopedrozg/conduto)
 
@@ -13,7 +13,7 @@ CLI para criar projetos de migração/ELT de dados: gera o `.env` com as credenc
 - Geração do `.env` com as credenciais das duas pontas do duto
 - Manifesto `main.yml` com a ordem de dependência das tabelas
 - Schemas YAML de exemplo (clientes, pedidos e produtos) com PK, FK, `unique` e `default`
-- Ambiente Python gerenciado por `uv` com `pyyaml`, `jinja2`, `polars`, `dagster` e `dagster-webserver`
+- Ambiente Python gerenciado por `uv` com `pyyaml`, `jinja2`, `dagster` e `dagster-webserver`
 - Adapta-se automaticamente a um projeto uv existente (gera direto no projeto atual, sem subpasta nem `uv init`)
 - Adapters de conexão com defaults por SGBD (porta, banco e usuário)
 - Mapa de particularidades por SGBD aplicado no fluxo do CLI e no DDL (ClickHouse: ENGINE/ORDER BY do MergeTree e sem constraints; Delta Lake: sem constraints no CREATE TABLE; MySQL: banco == schema)
@@ -307,7 +307,7 @@ meu_projeto/
 │   ├── clientes.yml
 │   ├── pedidos.yml
 │   └── produtos.yml
-└── ambiente uv (pyyaml, jinja2, polars, dagster, dagster-webserver)
+└── ambiente uv (pyyaml, jinja2, dagster, dagster-webserver)
 ```
 
 > Fora de um projeto uv, essa estrutura é criada dentro de `meu_projeto/`. Dentro de um projeto uv já existente, os arquivos são gerados no diretório atual. O projeto é inicializado **sem pasta `src/`** (`uv init --bare`) — scripts e código Dagster ficam na raiz.
@@ -407,7 +407,7 @@ Se ainda não existir `pyproject.toml`, o conduto inicializa o projeto e instala
 
 ```bash
 uv init --no-readme --bare   # sem pasta src/
-uv add pyyaml jinja2 polars dagster dagster-webserver
+uv add pyyaml jinja2 dagster dagster-webserver
 ```
 
 O projeto é inicializado sem a pasta `src/`, pois os scripts e o código Dagster ficam na raiz. E também a lib oficial do SGBD escolhido: `psycopg[binary]` (PostgreSQL), `pymysql` (MySQL) ou `pyodbc` (SQL Server). Essa dependência é do **projeto gerado**, não da CLI — na CLI os drivers são extras (`pip install "conduto[all]"`).
