@@ -138,6 +138,13 @@ def gerar_schemas_automaticos(
                     ))
                     barra.advance(tarefa)
                     continue
+                # descrever_tabela devolve o schema de ORIGEM em "schema", mas a
+                # chave "schema" do YAML e a do DESTINO (e e o que o DDL usa).
+                # Guarda o de origem numa chave propria: sem ela o ETL le toda
+                # tabela a partir do DB_ORIGEM_SCHEMA unico do .env e quebra
+                # com "Invalid object name" quando as tabelas vem de schemas
+                # diferentes da origem.
+                descricao["source_schema"] = descricao.get("schema")
                 descricao["schema"] = schema_destino
                 descricoes.append(descricao)
                 barra.advance(tarefa)
@@ -177,8 +184,10 @@ def _yaml_schema(tabela: Dict[str, Any]) -> str:
     linhas = [
         f"table: {tabela['table']}",
         f"schema: {tabela['schema']}",
-        f"description: \"Tabela {tabela['table']}\"",
     ]
+    if tabela.get("source_schema"):
+        linhas.append(f"source_schema: {tabela['source_schema']}")
+    linhas.append(f"description: \"Tabela {tabela['table']}\"")
     for chave in ("engine", "order_by", "partition_by"):
         if tabela.get(chave):
             linhas.append(f"{chave}: {_valor_yaml_seguro(str(tabela[chave]))}")

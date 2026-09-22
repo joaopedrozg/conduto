@@ -839,7 +839,14 @@ def carregar_tabela(tabela: Dict[str, Any], context=None) -> int:
     tipo_origem = env["DB_ORIGEM_TYPE"]
     tipo_destino = env["DB_DESTINO_TYPE"]
     nome = tabela["table"]
-    schema_origem = env.get("DB_ORIGEM_SCHEMA") or "public"
+    # O schema de origem vem do proprio YAML: cada tabela pode morar num
+    # schema diferente da origem. DB_ORIGEM_SCHEMA do .env e so o fallback
+    # para projetos antigos, que nao gravam source_schema.
+    schema_origem = (
+        tabela.get("source_schema")
+        or env.get("DB_ORIGEM_SCHEMA")
+        or "public"
+    )
     schema_destino = tabela.get("schema") or env.get("DB_DESTINO_SCHEMA") or "public"
 
     schedule = tabela.get("schedule") or {}

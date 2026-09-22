@@ -316,6 +316,8 @@ meu_projeto/
 
 Guarda as credenciais de origem e destino em variáveis `DB_ORIGEM_*` e `DB_DESTINO_*`:
 
+> `DB_ORIGEM_SCHEMA` é o schema de origem **padrão** — o ETL só usa quando o schema da tabela não está no `source_schema` dela. Com tabelas em schemas diferentes da origem, cada uma leva o seu no YAML.
+
 ```bash
 DB_ORIGEM_TYPE=postgresql
 DB_ORIGEM_HOST=localhost
@@ -373,9 +375,19 @@ tables:
 
 Schemas YAML que descrevem as tabelas: tipos, chave primária, foreign keys, `unique` e `default`.
 
+Duas chaves de schema, com funções diferentes:
+
+| Chave | Qual schema é |
+| --- | --- |
+| `schema` | o do **destino** — é o que o `conduto ddl` usa no `CREATE TABLE` |
+| `source_schema` | o da **origem** — é de onde o ETL lê a tabela na hora da carga |
+
+A de origem é gravada por tabela justamente porque uma tabela pode morar num schema e a outra em outro (SQL Server tem `Person`, `HumanResources`, `dbo`...). Sem ela o ETL leria tudo a partir do `DB_ORIGEM_SCHEMA` único do `.env` e falharia com `Invalid object name`. Em projetos antigos, sem a chave, o `DB_ORIGEM_SCHEMA` continua valendo como fallback.
+
 ```yaml
 table: clientes
 schema: public
+source_schema: public
 description: "Tabela de cadastro de clientes"
 schedule:
   cron: "0 * * * *"

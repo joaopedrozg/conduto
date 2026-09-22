@@ -11,7 +11,7 @@ from conduto.database.introspect import abrir_conexao, descrever_tabela
 from conduto.ddl.ddl_render import ler_env
 from conduto.ui import aviso, console, erro, progresso, tabela
 
-ORDEM_SCHEMA = ["table", "schema", "description", "schedule"]
+ORDEM_SCHEMA = ["table", "schema", "source_schema", "description", "schedule"]
 ORDEM_MAIN = ["version", "project", "schedule"]
 
 
@@ -150,9 +150,14 @@ def inferir_colunas(project_dir: Path, tabela_alvo: Optional[str] = None) -> Lis
         with progresso(len(alvos), "Inferindo colunas das tabelas...") as (barra, tarefa):
             for alvo in alvos:
                 nome = alvo["table"]
+                existentes = alvo["dados"] or {}
+                # Cada tabela pode morar num schema diferente da origem: usa o
+                # source_schema do proprio YAML e so cai no DB_ORIGEM_SCHEMA
+                # do .env quando o projeto ainda nao tem a chave.
+                schema_da_tabela = existentes.get("source_schema") or schema_origem
                 try:
                     descricao = descrever_tabela(
-                        adapter, credenciais, schema_origem, nome, conexao=conexao
+                        adapter, credenciais, schema_da_tabela, nome, conexao=conexao
                     )
                 except Exception as exc:
                     console.print(erro("Falha ao inferir {nome}: {erro}", nome=nome, erro=exc))
@@ -163,9 +168,12 @@ def inferir_colunas(project_dir: Path, tabela_alvo: Optional[str] = None) -> Lis
                     barra.advance(tarefa)
                     continue
 
-                dados = dict(alvo["dados"] or {})
+                dados = dict(existentes)
                 dados["table"] = descricao["table"]
                 dados["schema"] = dados.get("schema") or schema_destino
+                # Fixa o schema que acabou de funcionar, para a proxima
+                # inferencia e para o ETL nao depender do .env.
+                dados["source_schema"] = schema_da_tabela
                 dados["description"] = dados.get("description") or f"Tabela {nome}"
                 dados["columns"] = descricao["columns"]
                 dados = _reordenar(dados, ORDEM_SCHEMA)
