@@ -37,7 +37,6 @@ from conduto.schedules.schedules_auto import (
 )
 from conduto.ui import (
     CORES,
-    aplicar_ajustes,
     aviso,
     banner,
     carregando,
@@ -53,7 +52,6 @@ from conduto.ui import (
     sucesso,
 )
 
-aplicar_ajustes()
 definir_idioma(detectar_idioma())
 
 app = typer.Typer(
