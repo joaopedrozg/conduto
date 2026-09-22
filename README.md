@@ -168,7 +168,7 @@ conduto docs --no-open          # sem abrir o navegador automaticamente
 
 Depois de testar as duas conexões, o conduto pergunta como você quer configurar os schemas das tabelas:
 
-- **Gerar automaticamente**: o conduto lista as tabelas do banco de origem, permite buscar por nome e marcar/desmarcar quais incluir, lê as colunas (tipos, PK, FK, unique, default e nullable) e gera os `schemas/*.yml` e o `main.yml` na ordem de dependência (pais antes de filhos).
+- **Gerar automaticamente**: o conduto lista os schemas do banco de origem e, se houver mais de um, deixa marcar **qualquer quantidade com espaço**; só as tabelas dos schemas marcados entram na lista seguinte, onde você busca por nome e marca/desmarca quais incluir. Depois lê as colunas (tipos, PK, FK, unique, default e nullable) e gera os `schemas/*.yml` e o `main.yml` na ordem de dependência (pais antes de filhos). Com um único schema (MySQL, ClickHouse, Delta Lake) a primeira pergunta não aparece.
 - **Configurar manualmente**: mantém o comportamento atual e gera os três schemas de exemplo (clientes, pedidos e produtos) para você editar.
 
 ### DDL para o banco de destino

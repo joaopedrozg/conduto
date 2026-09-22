@@ -530,6 +530,9 @@ def init(
             gerou = gerar_schemas_automaticos(
                 project_dir, nome_projeto, adapter_origem, origem, destino["schema"]
             )
+        except typer.Exit:
+            # Cancelou a escolha de schemas/tabelas: aborta, nao gera exemplo.
+            raise
         except Exception as exc:
             console.print(erro("Falha na geração automática: {erro}", erro=exc))
             gerou = False

@@ -2,7 +2,7 @@
 
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from conduto.database.adapters import (
     Adapter,
@@ -19,21 +19,48 @@ from conduto.database.adapters import (
 from conduto.database.drivers import importar_driver
 
 
-def listar_tabelas(adapter: Adapter, credenciais: dict) -> List[Dict[str, str]]:
-    """Lista as tabelas (schema + nome) do banco de origem."""
+def filtrar_tabelas_por_schema(
+    tabelas: List[Dict[str, str]], schemas: Optional[Sequence[str]]
+) -> List[Dict[str, str]]:
+    """Mantem apenas as tabelas cujo schema esta em ``schemas``.
+
+    ``None`` nao filtra (lista tudo) e lista vazia nao mantem nada. Um banco
+    sem conceito de schema nunca passa por aqui: so filtramos quando ha schemas
+    distintos para escolher.
+    """
+    if schemas is None:
+        return tabelas
+    escolhidos = {s for s in schemas if s}
+    if not escolhidos:
+        return []
+    return [t for t in tabelas if t.get("schema") in escolhidos]
+
+
+def listar_tabelas(
+    adapter: Adapter,
+    credenciais: dict,
+    schemas: Optional[Sequence[str]] = None,
+) -> List[Dict[str, str]]:
+    """Lista as tabelas (schema + nome) do banco de origem.
+
+    ``schemas`` restringe a listagem aos schemas informados; omitido, lista
+    todos.
+    """
     if adapter.tipo == "postgresql":
-        return _listar_tabelas_postgres(credenciais)
-    if adapter.tipo == "mysql":
-        return _listar_tabelas_mysql(credenciais)
-    if adapter.tipo == "sqlserver":
-        return _listar_tabelas_sqlserver(credenciais)
-    if adapter.tipo == "clickhouse":
-        return _listar_tabelas_clickhouse(credenciais)
-    if adapter.tipo == "duckdb":
-        return _listar_tabelas_duckdb(credenciais)
-    if adapter.tipo == "deltalake":
-        return _listar_tabelas_deltalake(credenciais)
-    raise ValueError(f"Adapter desconhecido: {adapter.tipo}")
+        tabelas = _listar_tabelas_postgres(credenciais)
+    elif adapter.tipo == "mysql":
+        tabelas = _listar_tabelas_mysql(credenciais)
+    elif adapter.tipo == "sqlserver":
+        tabelas = _listar_tabelas_sqlserver(credenciais)
+    elif adapter.tipo == "clickhouse":
+        tabelas = _listar_tabelas_clickhouse(credenciais)
+    elif adapter.tipo == "duckdb":
+        tabelas = _listar_tabelas_duckdb(credenciais)
+    elif adapter.tipo == "deltalake":
+        tabelas = _listar_tabelas_deltalake(credenciais)
+    else:
+        raise ValueError(f"Adapter desconhecido: {adapter.tipo}")
+    return filtrar_tabelas_por_schema(tabelas, schemas)
 
 
 _CONEXOES = {

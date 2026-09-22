@@ -155,6 +155,9 @@ CATALOGO_EN: dict[str, str] = {
     "Gerado: ": "Generated: ",
     "Arquivo .env gerado em: ": ".env file generated at: ",
     "Selecione as tabelas para gerar os schemas:": "Select the tables to generate schemas:",
+    "Selecione os schemas da origem:": "Select the source schemas:",
+    "Nenhum schema selecionado.": "No schema selected.",
+    "{qtd_schemas} schema(s), {qtd} tabela(s).": "{qtd_schemas} schema(s), {qtd} table(s).",
     "(setas para navegar, espaco para marcar/desmarcar, digite para filtrar, backspace limpa a busca, enter para confirmar)": "(arrow keys to navigate, space to toggle, type to filter, backspace clears the search, enter to confirm)",
     "Nenhum template Dagster em: {diretorio}": "No Dagster template at: {diretorio}",
     "Dependências: ": "Dependencies: ",
@@ -196,8 +199,7 @@ CATALOGO_EN: dict[str, str] = {
     "Dependências do {tipo} instaladas com sucesso: {lista}": "{tipo} dependencies installed successfully: {lista}",
     "Falha ao instalar as dependências do {tipo}: {erro}": "Failed to install the {tipo} dependencies: {erro}",
     "Instale manualmente com: {comando}": "Install manually with: {comando}",
-    "Python do sistema gerenciado (PEP 668)": "System Python is externally managed (PEP 668)",
-    "Este Python não é um venv e sua distribuição (Debian/Ubuntu, Fedora, Arch, Homebrew) bloqueia `pip install` fora de venv para não quebrar os pacotes do sistema.\n\nDuas saídas:\n  • Rode o conduto com `uvx \"conduto[{extra}]\"` — ele cria um venv isolado sozinho.\n  • Ou instale mesmo assim, arriscando o pacote Python do sistema (--break-system-packages).":
+    "Python do sistema gerenciado (PEP 668)": "System Python is externally managed (PEP 668)",    "Este Python não é um venv e sua distribuição (Debian/Ubuntu, Fedora, Arch, Homebrew) bloqueia `pip install` fora de venv para não quebrar os pacotes do sistema.\n\nDuas saídas:\n  • Rode o conduto com `uvx \"conduto[{extra}]\"` — ele cria um venv isolado sozinho.\n  • Ou instale mesmo assim, arriscando o pacote Python do sistema (--break-system-packages).":
         "This Python is not a venv and your distribution (Debian/Ubuntu, Fedora, Arch, Homebrew) blocks `pip install` outside a venv to keep system packages intact.\n\nTwo options:\n  • Run conduto with `uvx \"conduto[{extra}]\"` — it creates an isolated venv on its own.\n  • Or install anyway, risking the system Python package (--break-system-packages).",
     "Instalar mesmo assim no Python do sistema (--break-system-packages)?":
         "Install anyway into the system Python (--break-system-packages)?",
