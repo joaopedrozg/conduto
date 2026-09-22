@@ -22,7 +22,6 @@ class ParticularidadesSGBD:
     # Constraints suportadas no CREATE TABLE
     suporta_pk: bool = True
     suporta_unique: bool = True
-    suporta_fk: bool = True
     # ClickHouse: engine padrão e ORDER BY obrigatório do MergeTree
     engine_padrao: str | None = None
     requer_order_by: bool = False
@@ -60,7 +59,6 @@ PARTICULARIDADES: Dict[str, ParticularidadesSGBD] = {
         schema_recurso='database',
         suporta_pk=False,
         suporta_unique=False,
-        suporta_fk=False,
         engine_padrao='MergeTree',
         requer_order_by=True,
         chaves_tabela=('engine', 'order_by', 'partition_by'),
@@ -83,7 +81,6 @@ PARTICULARIDADES: Dict[str, ParticularidadesSGBD] = {
         schema_recurso='database',
         suporta_pk=False,
         suporta_unique=False,
-        suporta_fk=False,
         suporta_criar_schema=False,
         notas=('Sem constraints de PK/FK/unique no CREATE TABLE (Delta Lake).',),
     ),

@@ -1,6 +1,5 @@
 """Geração automática dos schemas YAML e do main.yml a partir do banco de origem."""
 
-from collections import deque
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -161,9 +160,11 @@ def gerar_schemas_automaticos(
 
 
 def gerar_arquivos(project_dir: Path, project_name: str, descricoes: List[Dict[str, Any]]) -> Path:
-    """Escreve os schemas em schemas/ e o main.yml na ordem de dependência."""
-    descricoes = _ordenar_por_dependencia(descricoes)
+    """Escreve os schemas em schemas/ e o main.yml na ordem em que forem recebidos.
 
+    Não há reordenação por FK: sem dependências entre as tabelas a ordem do
+    manifesto não impõe nada, e qualquer tabela pode ser carga isolada.
+    """
     schemas_dir = project_dir / "schemas"
     schemas_dir.mkdir(parents=True, exist_ok=True)
 
@@ -212,7 +213,7 @@ def _yaml_main(project_name: str, tabelas: List[str]) -> str:
         'version: "1.0"',
         f"project: {project_name}",
         "",
-        "# Tabelas na ordem de dependência (pais antes de filhos)",
+        "# Tabelas do projeto — nenhuma depende de outra: cada uma carrega sozinha",
         "tables:",
     ]
     for tabela in tabelas:
@@ -229,39 +230,3 @@ def _valor_yaml_seguro(valor: str) -> str:
     if (": " in valor or " #" in valor or valor[0] in "-?:,[]{}#&*!|>'\"%@`"):
         return '"' + valor.replace("\\", "\\\\").replace('"', '\\"') + '"'
     return valor
-
-
-def _ordenar_por_dependencia(tabelas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Ordena as tabelas para que dependências (FK) venham antes dos dependentes."""
-    nomes = [t["table"] for t in tabelas]
-    pos = {nome: i for i, nome in enumerate(nomes)}
-
-    grau = {nome: 0 for nome in nomes}
-    filhos = {nome: [] for nome in nomes}
-    for tabela in tabelas:
-        for coluna in tabela["columns"]:
-            fk = coluna.get("foreign_key")
-            if not fk:
-                continue
-            ref = fk.split("(", 1)[0].rsplit(".", 1)[-1]
-            if ref not in pos or ref == tabela["table"]:
-                continue
-            grau[tabela["table"]] += 1
-            filhos[ref].append(tabela["table"])
-
-    fila = deque(nome for nome in nomes if grau[nome] == 0)
-    ordenados = []
-    while fila:
-        nome = fila.popleft()
-        ordenados.append(nome)
-        for filho in filhos[nome]:
-            grau[filho] -= 1
-            if grau[filho] == 0:
-                fila.append(filho)
-
-    if len(ordenados) != len(nomes):
-        # Ciclo ou dependência fora do conjunto: mantém a ordem original.
-        return tabelas
-
-    por_nome = {t["table"]: t for t in tabelas}
-    return [por_nome[nome] for nome in ordenados]

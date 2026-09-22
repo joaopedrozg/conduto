@@ -67,7 +67,7 @@ def credenciais_destino(project_dir: Path) -> Tuple[dict, str]:
 
 
 def carregar_tabelas(project_dir: Path) -> List[Dict[str, Any]]:
-    """Lê o main.yml (ordem de dependência) e os schemas/*.yml referenciados."""
+    """Lê o main.yml (lista de tabelas) e os schemas/*.yml referenciados."""
     project_dir = Path(project_dir)
     main_path = project_dir / "main.yml"
     if main_path.exists():
@@ -564,35 +564,12 @@ def _linha_coluna(coluna: Dict[str, Any], sgbd: str) -> str:
     return " ".join(partes)
 
 
-_FK_RE = re.compile(
-    r"^(?:([A-Za-z_][A-Za-z0-9_]*)\.)?([A-Za-z_][A-Za-z0-9_]*)\(([A-Za-z_][A-Za-z0-9_]*)\)$"
-)
-
-
-def _linha_foreign_key(
-    tabela: Dict[str, Any], coluna: Dict[str, Any], sgbd: str
-) -> Optional[str]:
-    fk = coluna.get("foreign_key")
-    if not fk:
-        return None
-    correspondencia = _FK_RE.match(str(fk).strip())
-    if not correspondencia:
-        return None
-    ref_schema, ref_tabela, ref_coluna = correspondencia.groups()
-    schema_atual = tabela.get("schema") or "public"
-    if ref_schema:
-        referencia = f"{_aspas(sgbd, ref_schema)}.{_aspas(sgbd, ref_tabela)}"
-    else:
-        referencia = f"{_aspas(sgbd, schema_atual)}.{_aspas(sgbd, ref_tabela)}"
-    nome = f"fk_{tabela['table']}_{coluna['name']}"
-    return (
-        f"  CONSTRAINT {_aspas(sgbd, nome)} FOREIGN KEY ({_aspas(sgbd, coluna['name'])}) "
-        f"REFERENCES {referencia} ({_aspas(sgbd, ref_coluna)})"
-    )
-
-
 def gerar_ddl_tabela(tabela: Dict[str, Any], sgbd: str) -> str:
-    """Gera o CREATE TABLE de uma tabela (com PK, unique e FKs)."""
+    """Gera o CREATE TABLE de uma tabela (com PK e unique).
+
+    Não há FOREIGN KEY: no ambiente analítico a constraint só atrapalha a
+    carga — impediria ler uma tabela sem a outra que ela referencia.
+    """
     schema = tabela.get("schema") or "public"
     nome = tabela["table"]
     qualificado = f"{_aspas(sgbd, schema)}.{_aspas(sgbd, nome)}"
@@ -631,12 +608,6 @@ def gerar_ddl_tabela(tabela: Dict[str, Any], sgbd: str) -> str:
                 linhas.append(
                     f"  CONSTRAINT {_aspas(sgbd, nome_uq)} UNIQUE ({_aspas(sgbd, coluna['name'])})"
                 )
-
-    if particulares.suporta_fk:
-        for coluna in colunas_unicas:
-            fk = _linha_foreign_key(tabela, coluna, sgbd)
-            if fk:
-                linhas.append(fk)
 
     corpo = ",\n".join(linhas)
 
@@ -703,7 +674,10 @@ def _preambulo_schema(schema: str, sgbd: str) -> str:
 
 
 def gerar_ddl(tabelas: List[Dict[str, Any]], sgbd: str) -> str:
-    """Gera o DDL completo (schemas + CREATE TABLE) na ordem de dependência."""
+    """Gera o DDL completo (schemas + CREATE TABLE), na ordem das tabelas recebidas.
+
+    A ordem não impõe nada: sem FOREIGN KEY qualquer tabela é criada sozinha.
+    """
     schemas: List[str] = []
     for tabela in tabelas:
         schema = tabela.get("schema") or "public"

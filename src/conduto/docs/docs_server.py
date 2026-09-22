@@ -211,7 +211,6 @@ def _resumo_particularidades() -> List[Dict[str, Any]]:
             "schema_recurso": p.schema_recurso,
             "suporta_pk": p.suporta_pk,
             "suporta_unique": p.suporta_unique,
-            "suporta_fk": p.suporta_fk,
             "engine_padrao": p.engine_padrao or "",
             "requer_order_by": p.requer_order_by,
             "chaves_tabela": list(p.chaves_tabela),

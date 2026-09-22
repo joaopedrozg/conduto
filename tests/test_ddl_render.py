@@ -432,12 +432,18 @@ def test_gerar_ddl_tabela_postgres():
     assert ddl.endswith(";")
 
 
-def test_gerar_ddl_tabela_foreign_key():
+def test_gerar_ddl_tabela_nao_emite_foreign_key():
+    """Ambiente analítico: a FK declarada não vira constraint no destino.
+
+    A coluna continua existindo (a carga lê dela) e o YAML continua documentando
+    a relação — só o ``FOREIGN KEY`` do ``CREATE TABLE`` foi removido, para que
+    ``pedidos`` possa ser carregada sem ``clientes``.
+    """
     ddl = gerar_ddl_tabela(TABELA_PEDIDOS, "postgresql")
-    assert (
-        'CONSTRAINT "fk_pedidos_cliente_id" FOREIGN KEY ("cliente_id") '
-        'REFERENCES "public"."clientes" ("id")'
-    ) in ddl
+
+    assert "FOREIGN KEY" not in ddl
+    assert "REFERENCES" not in ddl
+    assert '"cliente_id" integer' in ddl
     assert '"valor" numeric(10,2)' in ddl
 
 
@@ -498,7 +504,7 @@ def test_gerar_ddl_com_cabecalho_e_preambulos():
     assert 'CREATE SCHEMA IF NOT EXISTS "public";' in ddl
     assert 'CREATE TABLE IF NOT EXISTS "public"."clientes"' in ddl
     assert 'CREATE TABLE IF NOT EXISTS "public"."pedidos"' in ddl
-    # ordem de dependência preservada: clientes antes de pedidos
+    # a ordem recebida é preservada — sem reordenação por FK
     assert ddl.index('"clientes"') < ddl.index('"pedidos"')
 
 
