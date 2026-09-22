@@ -212,7 +212,7 @@ def _listar_schemas_sqlserver(credenciais: dict) -> list:
     try:
         cur = conn.cursor()
         cur.execute(
-            "SELECT name FROM sys.schemas WHERE schema_id = 1 OR schema_id > 16383 ORDER BY name"
+            "SELECT name FROM sys.schemas WHERE schema_id < 16384 AND name NOT IN ('sys', 'INFORMATION_SCHEMA', 'guest') ORDER BY name"
         )
         return [r[0] for r in cur.fetchall()]
     finally:
