@@ -288,17 +288,111 @@ _VARCHAR_SEM_TAMANHO = {
 }
 
 
-def mapear_tipo(tipo: str, sgbd: str) -> str:
-    """Converte o tipo do schema YAML para o tipo nativo do SGBD de destino."""
-    mapeamento = _TIPOS_POR_SGBD.get(sgbd, {})
+# Texto portatil: aceito por todos os destinos suportados e com espaco
+# ilimitado, entao um valor cru vindo da origem nunca e truncado.
+_TEXTO_PORTATIL = {
+    "postgresql": "text",
+    "mysql": "text",
+    "sqlserver": "nvarchar(max)",
+    "clickhouse": "String",
+    "duckdb": "varchar",
+    "deltalake": "string",
+}
+
+
+def _custom(**por_sgbd: str) -> Dict[str, str]:
+    """Completa as regras de um tipo customizado com o texto portatil do destino.
+
+    So vale declarar uma regra quando o destino aceita o valor tal qual ele
+    chega: o EL nao tem camada de transformacao, entao por exemplo o WKT do
+    ``point`` do PostgreSQL nao vira geometria binaria no MySQL -- vira texto.
+    """
+    return {
+        sgbd: por_sgbd.get(sgbd, _TEXTO_PORTATIL[sgbd]) for sgbd in _TIPOS_POR_SGBD
+    }
+
+
+# Tipos customizados (extensoes, espaciais, de rede, do proprio catálogo do
+# banco) que _TIPOS_POR_SGBD nao cobre. Sem entrada aqui o tipo passaria cru
+# e o CREATE TABLE falharia no destino.
+_TIPOS_CUSTOMIZADOS: Dict[str, Dict[str, str]] = {
+    # Extensoes e busca textual do PostgreSQL
+    "ltree": _custom(postgresql="ltree"),
+    "citext": _custom(postgresql="citext"),
+    "hstore": _custom(postgresql="hstore"),
+    "tsvector": _custom(postgresql="tsvector"),
+    "jsonpath": _custom(postgresql="jsonpath"),
+    "varbit": _custom(postgresql="varbit"),
+    # Enderecos de rede
+    "inet": _custom(postgresql="inet"),
+    "cidr": _custom(postgresql="cidr"),
+    # Geometricos: o valor cru e a representacao textual do PostgreSQL
+    "point": _custom(postgresql="point"),
+    "line": _custom(postgresql="line"),
+    "lseg": _custom(postgresql="lseg"),
+    "box": _custom(postgresql="box"),
+    "path": _custom(postgresql="path"),
+    "polygon": _custom(postgresql="polygon"),
+    "circle": _custom(postgresql="circle"),
+    "interval": _custom(postgresql="interval", duckdb="interval"),
+    # Espaciais: so tem suporte nativo onde existem mesmo
+    "geometry": _custom(postgresql="geometry", sqlserver="geometry"),
+    "geography": _custom(postgresql="geography", sqlserver="geography"),
+    # Tipos exclusivos do SQL Server
+    "hierarchyid": _custom(sqlserver="hierarchyid"),
+    "sql_variant": _custom(sqlserver="sql_variant"),
+    # Exclusivos do MySQL
+    "year": _custom(
+        postgresql="smallint",
+        mysql="year",
+        sqlserver="smallint",
+        clickhouse="Int16",
+        duckdb="smallint",
+        deltalake="integer",
+    ),
+    "set": _custom(postgresql="text"),
+    # Arrays do PostgreSQL: so existem la dentro
+    "array": _custom(postgresql="text[]"),
+}
+
+
+def _resolver_base(base: str, sgbd: str) -> Optional[str]:
+    """Devolve o tipo do destino para uma base conhecida, ou None se desconhecida."""
+    novo = _TIPOS_POR_SGBD.get(sgbd, {}).get(base)
+    if novo is not None:
+        return novo
+    custom = _TIPOS_CUSTOMIZADOS.get(base)
+    if custom is not None:
+        return custom.get(sgbd)
+    if len(base) > 1 and base.startswith("_"):
+        # Nome udt de array do PostgreSQL: '_int4', '_text', ...
+        return base if sgbd == "postgresql" else _TEXTO_PORTATIL[sgbd]
+    return None
+
+
+def mapear_tipo(
+    tipo: str, sgbd: str, override: Optional[Dict[str, str]] = None
+) -> str:
+    """Converte o tipo do schema YAML para o tipo nativo do SGBD de destino.
+
+    ``override`` vem do bloco ``types:`` da coluna no YAML e vence qualquer
+    regra de tabela: e o escape hatch para quando o usuario sabe melhor o que o
+    proprio destino aceita.
+    """
+    if override:
+        alvo = str(override.get(sgbd, "")).strip()
+        if alvo:
+            return alvo
+
     texto = tipo.strip()
     correspondencia = re.match(r"^([a-z0-9_ ]+?)\s*\((.*)\)$", texto, re.IGNORECASE)
     if correspondencia:
         base = correspondencia.group(1).strip().lower()
         if sgbd == "deltalake" and base in ("text", "varchar", "char"):
             return "string"
-        novo = mapeamento.get(base)
+        novo = _resolver_base(base, sgbd)
         if novo is None:
+            _aviso_tipo_sem_regra(texto, sgbd)
             return texto
         if "(" in novo:
             return novo
@@ -309,12 +403,22 @@ def mapear_tipo(tipo: str, sgbd: str) -> str:
     base = texto.lower()
     if sgbd == "deltalake" and base in ("text", "varchar", "char"):
         return "string"
-    novo = mapeamento.get(base)
+    novo = _resolver_base(base, sgbd)
     if novo is None:
+        _aviso_tipo_sem_regra(texto, sgbd)
         return texto
     if base == "varchar" and novo in ("varchar", "nvarchar"):
         return _VARCHAR_SEM_TAMANHO.get(sgbd, novo)
     return novo
+
+
+def _aviso_tipo_sem_regra(tipo: str, sgbd: str) -> None:
+    """Avisa que um tipo nao tem regra para o destino e vai passar cru."""
+    console.print(
+        f"[yellow]Aviso: tipo '{tipo}' sem mapeamento para {sgbd}; "
+        f"sendo usado como esta. Declare um equivalente em 'types:' da coluna "
+        f"se o CREATE TABLE falhar.[/yellow]"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -433,7 +537,7 @@ def _aspas(sgbd: str, identificador: str) -> str:
 
 def _linha_coluna(coluna: Dict[str, Any], sgbd: str) -> str:
     nome = _aspas(sgbd, coluna["name"])
-    tipo_sql = mapear_tipo(coluna["type"], sgbd)
+    tipo_sql = mapear_tipo(coluna["type"], sgbd, coluna.get("types"))
     if (
         sgbd == "clickhouse"
         and coluna.get("nullable", True)
@@ -780,4 +884,10 @@ def _tipo_arrow(tipo: str):
     m = re.match(r"^(numeric|decimal)\((\d+)\)$", t)
     if m:
         return pa.decimal128(int(m.group(2)), 0)
-    raise ValueError(f"Tipo nao mapeado para Delta: {tipo}")
+    # Tipo customizado (ltree, inet, geometry, ...) sem equivalente Arrow:
+    # grava como texto, que e como a carga entrega o valor cru.
+    console.print(
+        f"[yellow]Aviso: tipo '{tipo}' sem equivalente Arrow; "
+        f"a coluna sera criada como string no Delta.[/yellow]"
+    )
+    return pa.string()

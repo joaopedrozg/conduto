@@ -75,9 +75,9 @@ TABELA_PEDIDOS = {
         # Delta Lake nunca tem tipo com parâmetro em texto/varchar/char
         ("varchar(255)", "deltalake", "string"),
         ("text", "deltalake", "string"),
-        # tipo desconhecido cai no texto original (fallback)
+        # tipo customizado degrada para texto aceito pelo destino
         ("geometry", "postgresql", "geometry"),
-        ("inet", "mysql", "inet"),
+        ("inet", "mysql", "text"),
     ],
 )
 def test_mapear_tipo(tipo, sgbd, esperado):
@@ -98,6 +98,239 @@ def test_mapear_tipo_clickhouse_datetime_com_parametros():
 def test_mapear_tipo_case_insensitive():
     assert mapear_tipo("INTEGER", "mysql") == "int"
     assert mapear_tipo("  Integer  ", "sqlserver") == "int"
+
+
+# ---------------------------------------------------------------------------
+# tipos customizados
+# ---------------------------------------------------------------------------
+
+
+DESTINOS = [
+    "postgresql",
+    "mysql",
+    "sqlserver",
+    "clickhouse",
+    "duckdb",
+    "deltalake",
+]
+
+
+@pytest.mark.parametrize(
+    "tipo",
+    [
+        "ltree",
+        "citext",
+        "hstore",
+        "tsvector",
+        "inet",
+        "cidr",
+        "geometry",
+        "geography",
+        "point",
+        "line",
+        "lseg",
+        "box",
+        "path",
+        "polygon",
+        "circle",
+        "interval",
+        "varbit",
+        "jsonpath",
+        "hierarchyid",
+        "sql_variant",
+        "year",
+        "set",
+    ],
+)
+def test_tipo_customizado_tem_regra_para_todos_os_destinos(tipo):
+    # Nenhum destino pode ficar sem regra: sem ela o tipo passaria cru e o
+    # CREATE TABLE falharia no banco.
+    from conduto.ddl.ddl_render import _TIPOS_CUSTOMIZADOS
+
+    assert tipo in _TIPOS_CUSTOMIZADOS, f"{tipo} sem regra em _TIPOS_CUSTOMIZADOS"
+    for sgbd in DESTINOS:
+        regra = _TIPOS_CUSTOMIZADOS[tipo].get(sgbd)
+        assert regra, f"{tipo} sem regra para {sgbd}"
+
+
+@pytest.mark.parametrize(
+    "tipo,sgbd,esperado",
+    [
+        # O tipo e mantido onde existe nativamente...
+        ("ltree", "postgresql", "ltree"),
+        ("citext", "postgresql", "citext"),
+        ("inet", "postgresql", "inet"),
+        ("geometry", "postgresql", "geometry"),
+        ("hierarchyid", "sqlserver", "hierarchyid"),
+        ("sql_variant", "sqlserver", "sql_variant"),
+        ("geometry", "sqlserver", "geometry"),
+        ("year", "mysql", "year"),
+        ("interval", "duckdb", "interval"),
+        # ...e degrada para texto portatil onde nao existe
+        ("ltree", "mysql", "text"),
+        ("ltree", "sqlserver", "nvarchar(max)"),
+        ("ltree", "clickhouse", "String"),
+        ("ltree", "duckdb", "varchar"),
+        ("ltree", "deltalake", "string"),
+        ("inet", "mysql", "text"),
+        ("citext", "deltalake", "string"),
+        ("geometry", "mysql", "text"),
+        ("geometry", "deltalake", "string"),
+        # Tipos exclusivos do SQL Server nao existem no PostgreSQL
+        ("hierarchyid", "postgresql", "text"),
+        ("sql_variant", "postgresql", "text"),
+        # 'year' do MySQL vira inteiro onde nao existe tipo de ano
+        ("year", "postgresql", "smallint"),
+        ("year", "deltalake", "integer"),
+        # Arrays do PostgreSQL so existem la dentro
+        ("_int4", "postgresql", "_int4"),
+        ("_int4", "mysql", "text"),
+        ("array", "postgresql", "text[]"),
+        ("array", "sqlserver", "nvarchar(max)"),
+    ],
+)
+def test_mapear_tipo_customizado(tipo, sgbd, esperado):
+    assert mapear_tipo(tipo, sgbd) == esperado
+
+
+def test_tipo_customizado_nunca_e_truncado_no_destino():
+    # Texto portatil nao tem limite de tamanho, entao o valor cru vindo da
+    # origem nao estoura o CREATE TABLE nem a carga.
+    from conduto.ddl.ddl_render import _TIPOS_CUSTOMIZADOS
+
+    for tipo, regras in _TIPOS_CUSTOMIZADOS.items():
+        for sgbd, regra in regras.items():
+            assert "(" in regra or sgbd == "clickhouse" or len(regra) < 20, (
+                f"{tipo}->{sgbd} = {regra!r} parece ter tamanho limitado"
+            )
+
+
+def test_tipo_desconhecido_passa_cru_com_aviso():
+    from conduto.ddl import ddl_render
+
+    with ddl_render.console.capture() as captura:
+        assert mapear_tipo("meu_tipo_exotico", "mysql") == "meu_tipo_exotico"
+    saida = captura.get()
+    assert "meu_tipo_exotico" in saida
+    assert "types:" in saida
+
+
+def test_override_no_yaml_vence_qualquer_regra():
+    # types: da coluna e o escape hatch para o usuario decidir
+    assert (
+        mapear_tipo("geometry", "mysql", {"mysql": "point"}) == "point"
+    )
+    assert (
+        mapear_tipo("ltree", "postgresql", {"postgresql": "text"}) == "text"
+    )
+    # override so para outro destino nao afeta este
+    assert (
+        mapear_tipo("ltree", "mysql", {"postgresql": "text"}) == "text"
+    )
+    # override vazio nao muda nada
+    assert mapear_tipo("integer", "mysql", {}) == "int"
+    assert mapear_tipo("integer", "mysql", {"mysql": ""}) == "int"
+
+
+def test_override_vence_mesmo_para_tipo_padrao():
+    assert mapear_tipo("varchar", "mysql", {"mysql": "varchar(500)"}) == "varchar(500)"
+
+
+def test_override_de_tipos_customizados_no_gerar_ddl():
+    tabela = {
+        "table": "pontos",
+        "schema": "public",
+        "columns": [
+            {
+                "name": "localizacao",
+                "type": "geometry",
+                "nullable": True,
+                "types": {"mysql": "point", "deltalake": "binary"},
+            }
+        ],
+    }
+    ddl_mysql = gerar_ddl_tabela(tabela, "mysql")
+    assert "`localizacao` point" in ddl_mysql
+
+    ddl_delta = gerar_ddl_tabela(tabela, "deltalake")
+    assert '"localizacao" binary' in ddl_delta
+
+    # sem override para o destino, cai na regra da tabela
+    ddl_pg = gerar_ddl_tabela(tabela, "postgresql")
+    assert '"localizacao" geometry' in ddl_pg
+
+
+def test_gerar_ddl_tabela_aceita_tipo_customizado_em_todos_os_destinos():
+    # Regressao: qualquer tipo customizado tem de virar um DDL valido, nunca
+    # uma excecao nem um tipo cru que o destino nao conhece.
+    tabela = {
+        "table": "rede",
+        "schema": "public",
+        "columns": [
+            {"name": "ip", "type": "inet", "nullable": False},
+            {"name": "caminho", "type": "ltree", "nullable": False},
+            {"name": "busca", "type": "tsvector"},
+        ],
+    }
+    esperado_mysql = {
+        "ip": "text",
+        "caminho": "text",
+        "busca": "text",
+    }
+    for sgbd in DESTINOS:
+        ddl = gerar_ddl_tabela(tabela, sgbd)
+        assert "CREATE TABLE" in ddl, f"DDL quebrado para {sgbd}: {ddl}"
+        if sgbd == "mysql":
+            for coluna, tipo in esperado_mysql.items():
+                assert f"`{coluna}` {tipo}" in ddl, ddl
+
+
+# ---------------------------------------------------------------------------
+# _tipo_arrow (criacao de tabela Delta)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "tipo",
+    ["ltree", "inet", "citext", "hstore", "geometry", "point", "tsvector", "meu_tipo"],
+)
+def test_tipo_arrow_nao_quebra_para_tipo_customizado(tipo):
+    # Regressao: _tipo_arrow lancava ValueError e derrubava a criacao da
+    # tabela Delta inteira com qualquer tipo customizado.
+    from conduto.ddl.ddl_render import _tipo_arrow
+
+    pa = pytest.importorskip("pyarrow")
+    assert _tipo_arrow(tipo) == pa.string()
+
+
+def test_tipo_arrow_preserva_os_tipos_padrao():
+    from conduto.ddl.ddl_render import _tipo_arrow
+
+    pa = pytest.importorskip("pyarrow")
+    assert _tipo_arrow("integer") == pa.int32()
+    assert _tipo_arrow("bigint") == pa.int64()
+    assert _tipo_arrow("boolean") == pa.bool_()
+    assert _tipo_arrow("timestamp") == pa.timestamp("us")
+    assert _tipo_arrow("binary") == pa.binary()
+    assert _tipo_arrow("numeric(10,2)") == pa.decimal128(10, 2)
+
+
+# ---------------------------------------------------------------------------
+# introspecao preserva o tipo customizado
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "tipo_origem",
+    ["geometry", "geography", "hierarchyid", "sql_variant"],
+)
+def test_inferir_tipo_preserva_customizado(tipo_origem):
+    # Antes estes tipos viravam 'text' ja na introspecao, e a informacao
+    # sumia antes de chegar ao DDL -- nao havia nem como dar override.
+    from conduto.database.introspect import inferir_tipo
+
+    assert inferir_tipo(tipo_origem) == tipo_origem
+
 
 
 # ---------------------------------------------------------------------------

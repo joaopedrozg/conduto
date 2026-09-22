@@ -74,7 +74,7 @@ def setup_uv_environment(base_path: Path, drivers: list | None = None):
         console.print(neutro("Projeto uv detectado, pulando 'uv init'."))
 
     # 2. Adicionar apenas as dependências que ainda não estão declaradas
-    dependencies = ["pyyaml", "jinja2", "polars", "dagster", "dagster-webserver"] + list(drivers or [])
+    dependencies = ["pyyaml", "jinja2", "dagster", "dagster-webserver"] + list(drivers or [])
 
     def _nome_dep(dep: str) -> str:
         return dep.split("[")[0].split(">=")[0].strip()

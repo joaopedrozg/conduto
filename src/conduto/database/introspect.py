@@ -145,8 +145,9 @@ def inferir_tipo(data_type: Optional[str], comprimento: Optional[int] = None,
     if t == "xml":
         return "xml"
     if t in ("hierarchyid", "geography", "geometry", "sql_variant"):
-        # Sem tipo nativo equivalente nos destinos suportados: grava como texto.
-        return "text"
+        # Tipos customizados: preserva o nome real para a geracao de DDL
+        # escolher o equivalente no destino (ver _TIPOS_CUSTOMIZADOS).
+        return t
 
     # Tipos compostos: ClickHouse, DuckDB e Delta (Arrow)
     if t.startswith(("nullable(", "lowcardinality(")):
