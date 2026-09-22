@@ -18,7 +18,7 @@ jobs:
         run: uv python install
 
       - name: Install project
-        run: uv sync
+        run: uv sync --all-extras
 
       - name: Check imports
         run: uv run python -c "import conduto.cli, conduto.env.env_render, conduto.schemas.schemas_render, conduto.project_base.gerar_project"

@@ -13,6 +13,7 @@ from conduto.database.adapters import (
     delta_cliente_s3,
     delta_eh_s3,
 )
+from conduto.database.drivers import importar_driver
 
 _IDENTIFICADOR = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -116,7 +117,7 @@ def _listar_bancos_postgres(credenciais: dict) -> list:
 
 
 def _criar_banco_postgres(credenciais: dict, nome: str) -> None:
-    from psycopg import sql
+    sql = importar_driver("psycopg").sql
 
     conn = conectar_postgres(credenciais, database="postgres")
     try:
@@ -146,7 +147,7 @@ def _listar_schemas_postgres(credenciais: dict) -> list:
 
 
 def _criar_schema_postgres(credenciais: dict, nome: str) -> None:
-    from psycopg import sql
+    sql = importar_driver("psycopg").sql
 
     conn = conectar_postgres(credenciais)
     try:
@@ -270,7 +271,7 @@ def _listar_bancos_duckdb(credenciais: dict) -> list:
 
 
 def _criar_banco_duckdb(credenciais: dict, nome: str) -> None:
-    import duckdb
+    duckdb = importar_driver("duckdb")
 
     caminho = credenciais.get("host") or ""
     if not caminho or str(caminho).strip() in (":memory:", "memory", ""):

@@ -181,6 +181,10 @@ CATALOGO_EN: dict[str, str] = {
     "USERNAME:": "USERNAME:",
     "PASSWORD:": "PASSWORD:",
     "DATABASE:": "DATABASE:",
+    "Driver '{modulo}' não instalado. Instale com: pip install \"conduto[{extra}]\" (ou: uv tool install \"conduto[{extra}]\")":
+        "Driver '{modulo}' not installed. Install with: pip install \"conduto[{extra}]\" (or: uv tool install \"conduto[{extra}]\")",
+    "Dependências do {nome} ausentes ({modulos}). Instale com: pip install \"conduto[{tipo}]\"":
+        "Missing {nome} dependencies ({modulos}). Install with: pip install \"conduto[{tipo}]\"",
 }
 
 # ok

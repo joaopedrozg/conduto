@@ -1,6 +1,6 @@
 [project]
 name = "conduto"
-version = "0.1.8"
+version = "0.1.28"
 description = "CLI to scaffold data migration/ELT projects with YAML schemas and a uv-managed environment."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -22,19 +22,40 @@ classifiers = [
     "Topic :: Software Development :: Code Generators",
 ]
 dependencies = [
-    "boto3>=1.34",
-    "clickhouse-connect>=1.7",
-    "deltalake>=0.20",
-    "duckdb>=1.0",
     "jinja2>=3.1.6",
-    "psycopg[binary]>=3.2",
-    "pyodbc>=5.1",
-    "pymysql>=1.1",
     "pyyaml>=6.0",
     "questionary>=2.1.1",
     "rich>=15.0.0",
     "typer>=0.27.1",
+]
+
+# Drivers de banco por SGBD. Cada extra instala so o que o SGBD pede;
+# "all" traz todos. Ex.: pip install "conduto[postgresql]" ou conduto[all].
+[project.optional-dependencies]
+postgresql = ["psycopg[binary]>=3.2"]
+mysql = ["pymysql>=1.1"]
+sqlserver = ["pyodbc>=5.1"]
+clickhouse = ["clickhouse-connect>=1.7"]
+duckdb = ["duckdb>=1.0"]
+deltalake = [
+    "deltalake>=0.20",
     "pyarrow>=15.0",
+    "boto3>=1.34",
+]
+all = [
+    "psycopg[binary]>=3.2",
+    "pymysql>=1.1",
+    "pyodbc>=5.1",
+    "clickhouse-connect>=1.7",
+    "duckdb>=1.0",
+    "deltalake>=0.20",
+    "pyarrow>=15.0",
+    "boto3>=1.34",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
 ]
 
 [project.scripts]
@@ -57,4 +78,3 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 conduto = ["templates/**/*.jinja"]
-

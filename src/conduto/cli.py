@@ -14,6 +14,7 @@ from conduto.database.admin import (
     listar_schemas,
     schema_padrao_sgbd,
 )
+from conduto.database.drivers import drivers_faltantes
 from conduto.database.particularidades import PARTICULARIDADES
 from conduto.ddl.ddl_render import (
     carregar_tabelas,
@@ -223,6 +224,16 @@ def coletar_credenciais(
         if sgbd is None:
             cancelar()
         adapter = ADAPTERS[sgbd]
+
+        faltantes = drivers_faltantes(adapter.tipo)
+        if faltantes:
+            console.print(aviso(
+                "Dependências do {nome} ausentes ({modulos}). "
+                "Instale com: pip install \"conduto[{tipo}]\"",
+                nome=adapter.nome,
+                modulos=", ".join(faltantes),
+                tipo=adapter.tipo,
+            ))
 
         console.print(separador())
         console.print(aviso(

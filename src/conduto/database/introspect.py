@@ -16,6 +16,7 @@ from conduto.database.adapters import (
     delta_eh_s3,
     delta_storage_options,
 )
+from conduto.database.drivers import importar_driver
 
 
 def listar_tabelas(adapter: Adapter, credenciais: dict) -> List[Dict[str, str]]:
@@ -677,7 +678,7 @@ def _listar_tabelas_deltalake(credenciais: dict) -> List[Dict[str, str]]:
 
 
 def _descrever_tabela_deltalake(credenciais: dict, schema: str, table: str) -> Dict[str, Any]:
-    from deltalake import DeltaTable
+    DeltaTable = importar_driver("deltalake").DeltaTable
 
     caminho = f"{delta_base(credenciais)}/{table}"
     opcoes = delta_storage_options(credenciais) or None
