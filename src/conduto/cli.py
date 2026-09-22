@@ -330,6 +330,9 @@ def _escolher_banco(adapter, credenciais: dict, rotulo: str, permitir_criar: boo
         opcoes = list(bancos)
         if permitir_criar:
             opcoes.append(opcao_criar)
+        if not opcoes:
+            console.print(erro("Nenhum banco de dados encontrado em {nome}.", nome=adapter.nome))
+            return pedir("DATABASE:", padrao=adapter.banco_padrao)
         escolha = selecionar("Selecione o banco de dados de {rotulo}:", opcoes, rotulo=rotulo)
         if escolha is None:
             cancelar()
@@ -361,6 +364,9 @@ def _escolher_schema(adapter, credenciais: dict, rotulo: str, permitir_criar: bo
         opcoes = list(schemas)
         if permitir_criar:
             opcoes.append(opcao_criar)
+        if not opcoes:
+            console.print(erro("Nenhum schema encontrado em {nome}.", nome=adapter.nome))
+            return schema_padrao_sgbd(adapter, credenciais)
         escolha = selecionar("Selecione o schema de {rotulo}:", opcoes, rotulo=rotulo)
         if escolha is None:
             cancelar()
