@@ -408,7 +408,8 @@ O projeto é inicializado sem a pasta `src/`, pois os scripts e o código Dagste
 ## Desenvolvimento
 
 ```bash
-uv sync
+uv sync --all-extras   # instala o projeto + drivers de todos os SGBD + dev (pytest)
+uv run pytest -q       # roda os testes
 uv build
 uv publish
 ```

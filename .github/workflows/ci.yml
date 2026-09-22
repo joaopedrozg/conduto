@@ -26,5 +26,8 @@ jobs:
       - name: Smoke test CLI
         run: uv run conduto --help
 
+      - name: Run tests
+        run: uv run pytest -q
+
       - name: Build package
         run: uv build
