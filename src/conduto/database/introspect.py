@@ -143,6 +143,9 @@ def inferir_tipo(data_type: Optional[str], comprimento: Optional[int] = None,
         return "enum"
     if t == "xml":
         return "xml"
+    if t in ("hierarchyid", "geography", "geometry", "sql_variant"):
+        # Sem tipo nativo equivalente nos destinos suportados: grava como texto.
+        return "text"
 
     # Tipos compostos: ClickHouse, DuckDB e Delta (Arrow)
     if t.startswith(("nullable(", "lowcardinality(")):
@@ -424,12 +427,13 @@ def _descrever_tabela_sqlserver(credenciais: dict, schema: str, table: str, cone
     try:
         cur = conn.cursor()
         cur.execute("""
-            SELECT c.name, ty.name,
-                   CASE WHEN ty.name IN ('nvarchar', 'nchar')
+            SELECT c.name, COALESCE(tyb.name, ty.name) AS tipo_base,
+                   CASE WHEN COALESCE(tyb.name, ty.name) IN ('nvarchar', 'nchar')
                         THEN c.max_length / 2 ELSE c.max_length END AS max_length,
                    c.precision, c.scale, c.is_nullable, dc.definition
             FROM sys.columns c
             JOIN sys.types ty ON c.user_type_id = ty.user_type_id
+            LEFT JOIN sys.types tyb ON c.system_type_id = tyb.system_type_id AND tyb.is_user_defined = 0
             LEFT JOIN sys.default_constraints dc ON c.default_object_id = dc.object_id
             WHERE c.object_id = OBJECT_ID(?)
             ORDER BY c.column_id
