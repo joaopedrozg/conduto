@@ -55,10 +55,10 @@ uv tool install "conduto[all]"
 ```
 
 > Sem o extra, a CLI funciona normalmente (`conduto --help`, `ddl`, `schedules`,
-> `docs`...). Ao escolher um SGBD cujo driver falta, o conduto avisa e diz
-> exatamente qual extra instalar. Os projetos gerados pelo `conduto init` seguem
-> recebendo o driver do SGBD no `uv add` deles — o extra é só para o ambiente
-> da CLI.
+> `docs`...). Ao escolher um SGBD cujo driver falta, o conduto pergunta se quer
+> instalar na hora (via `uv` ou `pip`) e diz o comando manual se falhar. Os
+> projetos gerados pelo `conduto init` seguem recebendo o driver do SGBD no
+> `uv add` deles — o extra é só para o ambiente da CLI.
 
 ### Idioma
 
