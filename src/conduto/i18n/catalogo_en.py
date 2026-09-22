@@ -196,6 +196,15 @@ CATALOGO_EN: dict[str, str] = {
     "Dependências do {tipo} instaladas com sucesso: {lista}": "{tipo} dependencies installed successfully: {lista}",
     "Falha ao instalar as dependências do {tipo}: {erro}": "Failed to install the {tipo} dependencies: {erro}",
     "Instale manualmente com: {comando}": "Install manually with: {comando}",
+    "Python do sistema gerenciado (PEP 668)": "System Python is externally managed (PEP 668)",
+    "Este Python não é um venv e sua distribuição (Debian/Ubuntu, Fedora, Arch, Homebrew) bloqueia `pip install` fora de venv para não quebrar os pacotes do sistema.\n\nDuas saídas:\n  • Rode o conduto com `uvx \"conduto[{extra}]\"` — ele cria um venv isolado sozinho.\n  • Ou instale mesmo assim, arriscando o pacote Python do sistema (--break-system-packages).":
+        "This Python is not a venv and your distribution (Debian/Ubuntu, Fedora, Arch, Homebrew) blocks `pip install` outside a venv to keep system packages intact.\n\nTwo options:\n  • Run conduto with `uvx \"conduto[{extra}]\"` — it creates an isolated venv on its own.\n  • Or install anyway, risking the system Python package (--break-system-packages).",
+    "Instalar mesmo assim no Python do sistema (--break-system-packages)?":
+        "Install anyway into the system Python (--break-system-packages)?",
+    "O Python em uso não é um venv e é gerenciado pelo sistema (PEP 668), então a instalação é bloqueada. Alternativas: rode o conduto com uvx/pipx (usa um venv isolado), crie um venv com `uv venv`, ou autorize com `pip install --break-system-packages {requisicoes}`.":
+        "The Python in use is not a venv and is system-managed (PEP 668), so the install is blocked. Options: run conduto with uvx/pipx (uses an isolated venv), create a venv with `uv venv`, or authorize it with `pip install --break-system-packages {requisicoes}`.",
+    "Ok — sem instalar no sistema. Para configurar depois, use `uvx \"conduto[{extra}]\"`.":
+        "OK — nothing installed system-wide. To set it up later, use `uvx \"conduto[{extra}]\"`.",
 }
 
 # ok

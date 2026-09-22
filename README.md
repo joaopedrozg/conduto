@@ -60,6 +60,28 @@ uv tool install "conduto[all]"
 > projetos gerados pelo `conduto init` seguem recebendo o driver do SGBD no
 > `uv add` deles — o extra é só para o ambiente da CLI.
 
+#### Linux: PEP 668 e o "ambiente virtual exigido"
+
+Debian/Ubuntu, Fedora, Arch e o Homebrew no macOS marcam o Python do sistema
+como *externally-managed* (PEP 668): `pip install` fora de um venv é recusado
+com "create a virtual environment". Isso **não** afeta quem usa
+`uvx "conduto[postgresql]"`, `uv tool` ou `pipx` — todos já rodam em venv
+próprio. Só quem instalou o conduto direto no Python do sistema
+(`pip install --user` ou `--break-system-packages`) esbarra nisso.
+
+Quando acontece, o conduto detecta o marker antes de instalar e mostra as
+duas saídas:
+
+```bash
+uvx "conduto[postgresql]"   # cria um venv isolado — sem mexer no sistema
+
+pip install --break-system-packages psycopg[binary]   # só se você autorizar
+```
+
+A pergunta "Instalar mesmo assim no Python do sistema?" tem padrão **não** —
+nada é quebrado sem consentimento explícito. Windows (python.org) e macOS não
+gerenciados não têm o marker, então seguem direto, sem a pergunta.
+
 ### Idioma
 
 O Conduto detecta o idioma da máquina automaticamente (português por padrão,

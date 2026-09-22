@@ -14,7 +14,11 @@ from conduto.database.admin import (
     listar_schemas,
     schema_padrao_sgbd,
 )
-from conduto.database.drivers import drivers_faltantes, instalar_drivers
+from conduto.database.drivers import (
+    drivers_faltantes,
+    gerenciado_pelo_sistema,
+    instalar_drivers,
+)
 from conduto.database.particularidades import PARTICULARIDADES
 from conduto.ddl.ddl_render import (
     carregar_tabelas,
@@ -216,6 +220,63 @@ def _mostrar_particularidades(adapter) -> None:
     ))
 
 
+def _instalar_dependencias_sgbd(adapter) -> bool:
+    """Pergunta e instala os drivers do SGBD; devolve True se não falta mais nada.
+
+    Sob PEP 668 (Python do sistema, comum no Linux) a instalação direta é
+    barrada — nesse caso explica antes e só quebra o sistema se o usuário
+    autorizar explicitamente. Chamado tanto antes de pedir credenciais quanto
+    pelo menu de falha de conexão.
+    """
+    quebrar_sistema = False
+    if gerenciado_pelo_sistema():
+        console.print(painel(
+            t("Python do sistema gerenciado (PEP 668)"),
+            t(
+                "Este Python não é um venv e sua distribuição (Debian/Ubuntu, "
+                "Fedora, Arch, Homebrew) bloqueia `pip install` fora de venv "
+                "para não quebrar os pacotes do sistema.\n\n"
+                "Duas saídas:\n"
+                "  • Rode o conduto com `uvx \"conduto[{extra}]\"` — ele cria um "
+                "venv isolado sozinho.\n"
+                "  • Ou instale mesmo assim, arriscando o pacote Python do "
+                "sistema (--break-system-packages).",
+                extra=adapter.tipo,
+            ),
+            cor=CORES["aviso"],
+        ))
+        quebrar_sistema = bool(confirmar(
+            "Instalar mesmo assim no Python do sistema (--break-system-packages)?",
+            padrao=False,
+        ))
+        if not quebrar_sistema:
+            console.print(neutro(
+                "Ok — sem instalar no sistema. Para configurar depois, use "
+                "`uvx \"conduto[{extra}]\"`.",
+                extra=adapter.tipo,
+            ))
+            return not drivers_faltantes(adapter.tipo)
+
+    if not confirmar(
+        "Deseja instalar as dependências do {nome} agora?",
+        padrao=True,
+        nome=adapter.nome,
+    ):
+        return not drivers_faltantes(adapter.tipo)
+
+    with carregando("Instalando dependências do {nome}...", nome=adapter.nome):
+        ok_dep, msg_dep = instalar_drivers(adapter.tipo, quebrar_sistema=quebrar_sistema)
+    console.print(sucesso(msg_dep) if ok_dep else erro(msg_dep))
+    if drivers_faltantes(adapter.tipo):
+        console.print(aviso(
+            "Ainda faltam ({modulos}) — o teste de conexão vai falhar. "
+            "Instale com: pip install \"conduto[{tipo}]\"",
+            modulos=", ".join(drivers_faltantes(adapter.tipo)),
+            tipo=adapter.tipo,
+        ))
+    return ok_dep
+
+
 def coletar_credenciais(
     rotulo: str, permitir_criar: bool = False, mostrar_particularidades: bool = False
 ):
@@ -237,26 +298,7 @@ def coletar_credenciais(
             ))
             # Driver ausente não é erro de credencial: oferece instalar antes
             # de pedir host/usuário/senha, que não resolveriam nada.
-            instalar = confirmar(
-                "Deseja instalar as dependências do {nome} agora?",
-                padrao=True,
-                nome=adapter.nome,
-            )
-            if instalar:
-                with carregando("Instalando dependências do {nome}...", nome=adapter.nome):
-                    ok_dep, msg_dep = instalar_drivers(adapter.tipo)
-                if ok_dep:
-                    console.print(sucesso(msg_dep))
-                else:
-                    console.print(erro(msg_dep))
-                faltantes = drivers_faltantes(adapter.tipo)
-                if faltantes:
-                    console.print(aviso(
-                        "Ainda faltam ({modulos}) — o teste de conexão vai falhar. "
-                        "Instale com: pip install \"conduto[{tipo}]\"",
-                        modulos=", ".join(faltantes),
-                        tipo=adapter.tipo,
-                    ))
+            _instalar_dependencias_sgbd(adapter)
 
         console.print(separador())
         console.print(aviso(
@@ -312,18 +354,11 @@ def coletar_credenciais(
                 continuar_mesmo_assim = True
                 break
             if escolha == opcao_instalar_dep:
-                with carregando(
-                    "Instalando dependências do {nome}...", nome=adapter.nome
-                ):
-                    ok_dep, msg_dep = instalar_drivers(adapter.tipo)
-                if ok_dep:
-                    console.print(sucesso(msg_dep))
+                if _instalar_dependencias_sgbd(adapter):
                     console.print(info(
                         "Dependências instaladas. Testando a conexão novamente "
                         "com as credenciais já informadas..."
                     ))
-                else:
-                    console.print(erro(msg_dep))
                 continue
 
             if platform.system() == "Windows" and not eh_administrador():

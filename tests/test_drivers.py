@@ -200,7 +200,10 @@ def test_candidatos_instalacao_sem_uv_nem_pip(monkeypatch):
 
 
 def test_instalar_drivers_sem_instalador_fica_claro(monkeypatch):
-    monkeypatch.setattr(drivers_mod, "_candidatos_instalacao", lambda reqs: [])
+    monkeypatch.setattr(
+        drivers_mod, "_candidatos_instalacao", lambda reqs, quebrar_sistema=False: []
+    )
+    monkeypatch.setattr(drivers_mod, "gerenciado_pelo_sistema", lambda: False)
     monkeypatch.setattr(drivers_mod, "requisicoes_pendentes", lambda tipo: ["pyodbc"])
     ok, mensagem = instalar_drivers("sqlserver")
     assert ok is False
@@ -216,7 +219,9 @@ def test_instalar_drivers_sucesso_no_primeiro_comando(monkeypatch):
 
     monkeypatch.setattr(drivers_mod, "requisicoes_pendentes", lambda tipo: ["pyodbc"])
     monkeypatch.setattr(
-        drivers_mod, "_candidatos_instalacao", lambda reqs: [["fake-uv"], ["fake-pip"]]
+        drivers_mod,
+        "_candidatos_instalacao",
+        lambda reqs, quebrar_sistema=False: [["fake-uv"], ["fake-pip"]],
     )
     monkeypatch.setattr(drivers_mod, "_rodar", _rodar_ok)
 
@@ -232,7 +237,9 @@ def test_instalar_drivers_falla_nos_dois_mostra_o_erro_e_o_comando(monkeypatch):
     respostas = iter([("uv deu ruim", True), ("pip deu ruim", True)])
     monkeypatch.setattr(drivers_mod, "requisicoes_pendentes", lambda tipo: ["pyodbc"])
     monkeypatch.setattr(
-        drivers_mod, "_candidatos_instalacao", lambda reqs: [["fake-uv"], ["fake-pip"]]
+        drivers_mod,
+        "_candidatos_instalacao",
+        lambda reqs, quebrar_sistema=False: [["fake-uv"], ["fake-pip"]],
     )
     monkeypatch.setattr(drivers_mod, "_rodar", lambda comando: next(respostas))
 
@@ -256,3 +263,96 @@ def test_rodar_comando_inexistente_nao_levanta(monkeypatch):
     saida, falhou = drivers_mod._rodar(["/bin/comando_que_nao_existe_zumbi_123"])
     assert falhou is True
     assert isinstance(saida, str) and saida
+
+
+# ---------------------------------------------------------------------------
+# PEP 668: Linux (Debian/Ubuntu, Fedora, Arch) e Homebrew barram pip fora de venv
+# ---------------------------------------------------------------------------
+
+
+def test_gerenciado_pelo_sistema_nunca_dentro_de_venv(monkeypatch, tmp_path):
+    """Dentro de venv o stdlib pode apontar para o sistema, onde o marker
+    EXISTE — mas a instalacao funciona. Checar so o arquivo daria falso
+    positivo no ambiente correto, entao 'em venv' vence."""
+    monkeypatch.setattr(drivers_mod, "em_venv", lambda: True)
+    marcador = tmp_path / "EXTERNALLY-MANAGED"
+    marcador.write_text("[externally-managed]\n")
+    monkeypatch.setattr(
+        drivers_mod.sysconfig, "get_path", lambda nome: str(tmp_path)
+    )
+    assert drivers_mod.gerenciado_pelo_sistema() is False
+
+
+def test_gerenciado_pelo_sistema_fora_de_venv_com_marker(monkeypatch, tmp_path):
+    """O caso do Ubuntu: Python do sistema com o marker do PEP 668."""
+    (tmp_path / "EXTERNALLY-MANAGED").write_text("[externally-managed]\n")
+    monkeypatch.setattr(drivers_mod, "em_venv", lambda: False)
+    monkeypatch.setattr(drivers_mod.sysconfig, "get_path", lambda nome: str(tmp_path))
+    assert drivers_mod.gerenciado_pelo_sistema() is True
+
+
+def test_gerenciado_pelo_sistema_fora_de_venv_sem_marker(monkeypatch, tmp_path):
+    """Windows (python.org) e venv sem marker: pip instalou direto, sem flag."""
+    monkeypatch.setattr(drivers_mod, "em_venv", lambda: False)
+    monkeypatch.setattr(drivers_mod.sysconfig, "get_path", lambda nome: str(tmp_path))
+    assert drivers_mod.gerenciado_pelo_sistema() is False
+
+
+def test_candidatos_bloqueados_sob_pep668_sem_autorizacao(monkeypatch):
+    """Sem autorizar --break-system-packages, nao tenta: pip e uv recusariam
+    com um mural de texto da distribuicao. Lista vazia vira mensagem clara."""
+    monkeypatch.setattr(drivers_mod, "gerenciado_pelo_sistema", lambda: True)
+    monkeypatch.setattr(shutil, "which", lambda nome: "/usr/bin/uv")
+    _com_pip(monkeypatch, disponivel=True)
+
+    assert drivers_mod._candidatos_instalacao(["pyodbc"]) == []
+
+
+def test_candidatos_com_break_system_packages_quando_autorizado(monkeypatch):
+    monkeypatch.setattr(drivers_mod, "gerenciado_pelo_sistema", lambda: True)
+    monkeypatch.setattr(shutil, "which", lambda nome: "/usr/bin/uv")
+    _com_pip(monkeypatch, disponivel=True)
+
+    candidatos = drivers_mod._candidatos_instalacao(
+        ["pyodbc"], quebrar_sistema=True
+    )
+
+    assert len(candidatos) == 2
+    for comando in candidatos:
+        assert "--break-system-packages" in comando
+    # as requisicoes ficam no fim, depois das flags
+    assert candidatos[0][-1] == "pyodbc"
+
+
+def test_candidatos_sem_flag_quando_nao_gerenciado(monkeypatch):
+    """PEP 668 inativo: --break-system-packages seria ruido desnecessario."""
+    monkeypatch.setattr(drivers_mod, "gerenciado_pelo_sistema", lambda: False)
+    monkeypatch.setattr(shutil, "which", lambda nome: "/usr/bin/uv")
+    _com_pip(monkeypatch, disponivel=True)
+
+    candidatos = drivers_mod._candidatos_instalacao(["pyodbc"], quebrar_sistema=True)
+
+    for comando in candidatos:
+        assert "--break-system-packages" not in comando
+
+
+def test_instalar_drivers_sob_pep668_sem_autorizacao_explica(monkeypatch):
+    """A mensagem tem que apontar as saidas reais (uvx/venv/flag) em vez de
+    repassar o mural de erro da distribuicao."""
+    monkeypatch.setattr(drivers_mod, "requisicoes_pendentes", lambda tipo: ["pyodbc"])
+    monkeypatch.setattr(drivers_mod, "gerenciado_pelo_sistema", lambda: True)
+    monkeypatch.setattr(
+        drivers_mod, "_rodar", lambda comando: pytest.fail("nao deveria rodar nada")
+    )
+
+    ok, mensagem = instalar_drivers("sqlserver")
+
+    assert ok is False
+    assert "PEP 668" in mensagem
+    assert "uvx" in mensagem  # o caminho que funciona sem mexer no sistema
+    assert "--break-system-packages" in mensagem  # o caminho arriscado
+
+
+def test_em_venv_espelha_o_interpretador():
+    """Sanidade: a funcao reflete o ambiente real (venv do projeto = True)."""
+    assert drivers_mod.em_venv() == (sys.prefix != sys.base_prefix)
