@@ -185,6 +185,17 @@ CATALOGO_EN: dict[str, str] = {
         "Driver '{modulo}' not installed. Install with: pip install \"conduto[{extra}]\" (or: uv tool install \"conduto[{extra}]\")",
     "Dependências do {nome} ausentes ({modulos}). Instale com: pip install \"conduto[{tipo}]\"":
         "Missing {nome} dependencies ({modulos}). Install with: pip install \"conduto[{tipo}]\"",
+    "Deseja instalar as dependências do {nome} agora?": "Do you want to install the {nome} dependencies now?",
+    "Instalando dependências do {nome}...": "Installing {nome} dependencies...",
+    "Ainda faltam ({modulos}) — o teste de conexão vai falhar. Instale com: pip install \"conduto[{tipo}]\"":
+        "Still missing ({modulos}) — the connection test will fail. Install with: pip install \"conduto[{tipo}]\"",
+    "Instalar dependências do SGBD": "Install the database dependencies",
+    "Dependências instaladas. Testando a conexão novamente com as credenciais já informadas...":
+        "Dependencies installed. Testing the connection again with the credentials you already entered...",
+    "Todas as dependências do {tipo} já estão instaladas.": "All {tipo} dependencies are already installed.",
+    "Dependências do {tipo} instaladas com sucesso: {lista}": "{tipo} dependencies installed successfully: {lista}",
+    "Falha ao instalar as dependências do {tipo}: {erro}": "Failed to install the {tipo} dependencies: {erro}",
+    "Instale manualmente com: {comando}": "Install manually with: {comando}",
 }
 
 # ok

@@ -14,7 +14,7 @@ from conduto.database.admin import (
     listar_schemas,
     schema_padrao_sgbd,
 )
-from conduto.database.drivers import drivers_faltantes
+from conduto.database.drivers import drivers_faltantes, instalar_drivers
 from conduto.database.particularidades import PARTICULARIDADES
 from conduto.ddl.ddl_render import (
     carregar_tabelas,
@@ -41,6 +41,7 @@ from conduto.ui import (
     aviso,
     banner,
     carregando,
+    confirmar,
     console,
     erro,
     info,
@@ -234,6 +235,28 @@ def coletar_credenciais(
                 modulos=", ".join(faltantes),
                 tipo=adapter.tipo,
             ))
+            # Driver ausente não é erro de credencial: oferece instalar antes
+            # de pedir host/usuário/senha, que não resolveriam nada.
+            instalar = confirmar(
+                "Deseja instalar as dependências do {nome} agora?",
+                padrao=True,
+                nome=adapter.nome,
+            )
+            if instalar:
+                with carregando("Instalando dependências do {nome}...", nome=adapter.nome):
+                    ok_dep, msg_dep = instalar_drivers(adapter.tipo)
+                if ok_dep:
+                    console.print(sucesso(msg_dep))
+                else:
+                    console.print(erro(msg_dep))
+                faltantes = drivers_faltantes(adapter.tipo)
+                if faltantes:
+                    console.print(aviso(
+                        "Ainda faltam ({modulos}) — o teste de conexão vai falhar. "
+                        "Instale com: pip install \"conduto[{tipo}]\"",
+                        modulos=", ".join(faltantes),
+                        tipo=adapter.tipo,
+                    ))
 
         console.print(separador())
         console.print(aviso(
@@ -255,6 +278,7 @@ def coletar_credenciais(
         opcao_digitar = t("Digitar novamente")
         opcao_continuar = t("Continuar mesmo assim")
         opcao_instalar = t("Instalar driver automaticamente")
+        opcao_instalar_dep = t("Instalar dependências do SGBD")
         while True:
             with carregando("Testando conexão com {nome}...", nome=adapter.nome):
                 ok, erro_conexao = testar_conexao(adapter, credenciais)
@@ -273,7 +297,10 @@ def coletar_credenciais(
                 erro=erro_conexao,
             ))
             opcoes = [opcao_digitar, opcao_continuar]
-            if adapter.tipo == "sqlserver" and "driver ODBC" in erro_conexao:
+            if drivers_faltantes(adapter.tipo):
+                # Driver ausente: Digitar novamente nao resolve nada.
+                opcoes.insert(0, opcao_instalar_dep)
+            elif adapter.tipo == "sqlserver" and "driver ODBC" in erro_conexao:
                 opcoes.insert(0, opcao_instalar)
             escolha = selecionar("O que deseja fazer?", opcoes)
 
@@ -284,6 +311,20 @@ def coletar_credenciais(
             if escolha == opcao_continuar:
                 continuar_mesmo_assim = True
                 break
+            if escolha == opcao_instalar_dep:
+                with carregando(
+                    "Instalando dependências do {nome}...", nome=adapter.nome
+                ):
+                    ok_dep, msg_dep = instalar_drivers(adapter.tipo)
+                if ok_dep:
+                    console.print(sucesso(msg_dep))
+                    console.print(info(
+                        "Dependências instaladas. Testando a conexão novamente "
+                        "com as credenciais já informadas..."
+                    ))
+                else:
+                    console.print(erro(msg_dep))
+                continue
 
             if platform.system() == "Windows" and not eh_administrador():
                 console.print(painel(
