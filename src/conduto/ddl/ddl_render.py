@@ -298,7 +298,7 @@ def mapear_tipo(tipo: str, sgbd: str) -> str:
             return "string"
         novo = mapeamento.get(base)
         if novo is None:
-            return _VARCHAR_SEM_TAMANHO.get(sgbd, "varchar")
+            return texto
         if "(" in novo:
             return novo
         if sgbd == "clickhouse" and novo not in ("FixedString", "Decimal"):
@@ -310,7 +310,7 @@ def mapear_tipo(tipo: str, sgbd: str) -> str:
         return "string"
     novo = mapeamento.get(base)
     if novo is None:
-        return _VARCHAR_SEM_TAMANHO.get(sgbd, "varchar")
+        return texto
     if base == "varchar" and novo in ("varchar", "nvarchar"):
         return _VARCHAR_SEM_TAMANHO.get(sgbd, novo)
     return novo
