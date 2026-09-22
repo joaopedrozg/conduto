@@ -301,6 +301,8 @@ def mapear_tipo(tipo: str, sgbd: str) -> str:
             return _VARCHAR_SEM_TAMANHO.get(sgbd, "varchar")
         if "(" in novo:
             return novo
+        if sgbd == "clickhouse" and novo not in ("FixedString", "Decimal"):
+            return novo
         return f"{novo}({correspondencia.group(2)})"
 
     base = texto.lower()
@@ -490,9 +492,23 @@ def gerar_ddl_tabela(tabela: Dict[str, Any], sgbd: str) -> str:
     nome = tabela["table"]
     qualificado = f"{_aspas(sgbd, schema)}.{_aspas(sgbd, nome)}"
 
-    linhas = [_linha_coluna(c, sgbd) for c in tabela.get("columns", [])]
+    colunas = tabela.get("columns", [])
+    nomes_vistos: set = set()
+    colunas_unicas = []
+    for c in colunas:
+        nm = c["name"]
+        if nm in nomes_vistos:
+            console.print(
+                f"[yellow]Aviso: coluna '{nm}' aparece mais de uma vez no schema "
+                f"da tabela '{nome}'. Remova as entradas duplicadas do arquivo YAML.[/yellow]"
+            )
+            continue
+        nomes_vistos.add(nm)
+        colunas_unicas.append(c)
 
-    pks = [c["name"] for c in tabela["columns"] if c.get("primary_key")]
+    linhas = [_linha_coluna(c, sgbd) for c in colunas_unicas]
+
+    pks = [c["name"] for c in colunas_unicas if c.get("primary_key")]
     particulares = PARTICULARIDADES[sgbd]
     if particulares.suporta_pk and pks:
         # Delta Lake e ClickHouse nao tem constraints no CREATE TABLE: no
@@ -504,7 +520,7 @@ def gerar_ddl_tabela(tabela: Dict[str, Any], sgbd: str) -> str:
         )
 
     if particulares.suporta_unique:
-        for coluna in tabela["columns"]:
+        for coluna in colunas_unicas:
             if coluna.get("unique"):
                 nome_uq = f"uq_{nome}_{coluna['name']}"
                 linhas.append(
@@ -512,7 +528,7 @@ def gerar_ddl_tabela(tabela: Dict[str, Any], sgbd: str) -> str:
                 )
 
     if particulares.suporta_fk:
-        for coluna in tabela["columns"]:
+        for coluna in colunas_unicas:
             fk = _linha_foreign_key(tabela, coluna, sgbd)
             if fk:
                 linhas.append(fk)
