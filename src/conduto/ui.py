@@ -129,7 +129,7 @@ def banner(titulo: str, subtitulo: Optional[str] = None, nome: Optional[str] = N
         corpo.append(f" {nome} ", style=CORES["destaque"])
     corpo.append("\n", style=CORES["neutro"])
     corpo.append(t("Interface: {idioma}", idioma=nome_idioma()), style=CORES["discreto"])
-    return Panel(corpo, border_style=CORES["borda"], expand=False, width=100)
+    return Panel(corpo, border_style=CORES["borda"], expand=True)
 
 
 def gerado(caminho: Any) -> Text:
