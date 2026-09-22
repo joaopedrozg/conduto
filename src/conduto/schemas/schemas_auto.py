@@ -8,7 +8,12 @@ import questionary
 import typer
 
 from conduto.database.adapters import Adapter
-from conduto.database.introspect import abrir_conexao, descrever_tabela, listar_tabelas
+from conduto.database.introspect import (
+    abrir_conexao,
+    descrever_tabela,
+    filtrar_tabelas_por_schema,
+    listar_tabelas,
+)
 from conduto.ui import aviso, carregando, console, erro, gerado, info, multi_selecionar, progresso
 
 custom_style = questionary.Style([
@@ -21,6 +26,48 @@ custom_style = questionary.Style([
     ('instruction', 'fg:white dim noreverse bg:black'),
     ('answer', 'fg:yellow bold noreverse bg:black'),
 ])
+
+# Mesma instrucao nos dois checkboxes: setas navegam, espaco marca, digito filtra.
+INSTRUCAO_BUSCA = (
+    "(setas para navegar, espaco para marcar/desmarcar, "
+    "digite para filtrar, backspace limpa a busca, enter para confirmar)"
+)
+
+
+def _escolher_schemas(tabelas: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    """Pergunta quais schemas da origem usar e devolve so as tabelas deles.
+
+    Nao pergunta quando ha um unico schema (nao ha escolha a fazer), que e o
+    caso de MySQL, ClickHouse e Delta Lake, que tem um schema so. Levanta
+    ``typer.Exit`` se o usuario cancelar e devolve ``[]`` se ele marcar nada.
+    """
+    disponiveis = sorted({t["schema"] for t in tabelas if t.get("schema")})
+    if len(disponiveis) <= 1:
+        return tabelas
+
+    escolhas = [questionary.Choice(title=nome, value=nome) for nome in disponiveis]
+    escolhidos = multi_selecionar(
+        "Selecione os schemas da origem:",
+        escolhas,
+        instrucao=INSTRUCAO_BUSCA,
+        style=custom_style,
+        use_search_filter=True,
+        use_jk_keys=False,
+    )
+    if escolhidos is None:
+        console.print(aviso("Operação cancelada."))
+        raise typer.Exit(code=1)
+    if not escolhidos:
+        console.print(aviso("Nenhum schema selecionado."))
+        return []
+
+    filtradas = filtrar_tabelas_por_schema(tabelas, escolhidos)
+    console.print(info(
+        "{qtd_schemas} schema(s), {qtd} tabela(s).",
+        qtd_schemas=len(escolhidos),
+        qtd=len(filtradas),
+    ))
+    return filtradas
 
 
 def gerar_schemas_automaticos(
@@ -38,6 +85,10 @@ def gerar_schemas_automaticos(
         console.print(aviso("Nenhuma tabela encontrada no banco de origem."))
         return False
 
+    tabelas = _escolher_schemas(tabelas)
+    if not tabelas:
+        return False
+
     console.print(info("{qtd} tabela(s) encontrada(s).", qtd=len(tabelas)))
     escolhas = [
         questionary.Choice(
@@ -50,10 +101,7 @@ def gerar_schemas_automaticos(
     selecionadas = multi_selecionar(
         "Selecione as tabelas para gerar os schemas:",
         escolhas,
-        instrucao=(
-            "(setas para navegar, espaco para marcar/desmarcar, "
-            "digite para filtrar, backspace limpa a busca, enter para confirmar)"
-        ),
+        instrucao=INSTRUCAO_BUSCA,
         style=custom_style,
         use_search_filter=True,
         use_jk_keys=False,
