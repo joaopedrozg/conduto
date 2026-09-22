@@ -401,6 +401,23 @@ Os três exemplos cobrem padrões comuns de modelagem:
 | `pedidos.yml` | chave estrangeira com `foreign_key: clientes(id)` |
 | `produtos.yml` | tipos `numeric` e `boolean`, colunas opcionais (`nullable: true`) |
 
+#### Tipos customizados
+
+Tipos que não são de todos os SGBD — `ltree`, `citext`, `hstore`, `tsvector`, `inet`, `cidr`, `geometry`, `interval`, `hierarchyid`, `year`, arrays do PostgreSQL etc. — têm uma regra por destino: o tipo é mantido onde existe nativamente (PostgreSQL, e `geometry`/`hierarchyid` no SQL Server) e degrada para texto aceito pelo destino nos demais (`text`/`nvarchar(max)`/`String`/`varchar`/`string`). Assim o `CREATE TABLE` nunca falha por causa do tipo.
+
+Quando a regra não é a que você quer, declare o equivalente na própria coluna com `types:` — ele vence qualquer tabela:
+
+```yaml
+columns:
+  - name: localizacao
+    type: geometry            # regra padrão por destino
+    types:                    # override: só para os destinos listados
+      mysql: point
+      deltalake: binary
+```
+
+Se um tipo não tiver regra nenhuma, ele passa como está e o conduto avisa — é sinal de que vale declarar um `types:`.
+
 ### Ambiente `uv`
 
 Se ainda não existir `pyproject.toml`, o conduto inicializa o projeto e instala as dependências do pipeline:
