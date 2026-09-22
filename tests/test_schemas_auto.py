@@ -256,8 +256,10 @@ def _sem_progresso(*args, **kwargs):
 
 
 def _descrever(adapter, credenciais, schema, table, conexao=None):
+    # Espelha o retorno real: "schema" vem como o schema de ORIGEM consultado.
     return {
         "table": table,
+        "schema": schema,
         "columns": [
             {"name": "id", "type": "integer", "primary_key": True, "nullable": False}
         ],
@@ -391,3 +393,87 @@ def test_fluxo_cancelar_tabelas_tambem_aborta(tmp_path, monkeypatch):
         gerar_schemas_automaticos(tmp_path, "proj", None, {}, "destino")
 
     assert not (tmp_path / "schemas").exists()
+
+
+# ---------------------------------------------------------------------------
+# source_schema: o schema de ORIGEM por tabela
+# ---------------------------------------------------------------------------
+
+
+def test_fluxo_grava_source_schema_e_schema_do_destino(tmp_path, monkeypatch):
+    """O bug: a chave "schema" e a do DESTINO, entao a de origem se perdia.
+
+    Sem source_schema o ETL lia toda tabela a partir do DB_ORIGEM_SCHEMA
+    unico do .env e falhava com "Invalid object name".
+    """
+    _preparar(
+        monkeypatch,
+        [["public"], [{"schema": "public", "table": "clientes"}]],
+    )
+    gerar_schemas_automaticos(tmp_path, "proj", None, {}, "destino")
+
+    texto = (tmp_path / "schemas" / "clientes.yml").read_text(encoding="utf-8")
+    assert "source_schema: public" in texto
+    assert "\nschema: destino\n" in texto
+    # as duas chaves juntas e a de origem logo em seguida
+    assert "schema: destino\nsource_schema: public\n" in texto
+
+
+def test_fluxo_descreve_a_tabela_no_schema_de_origem(tmp_path, monkeypatch):
+    """descrever_tabela tem de consultar onde a tabela mora, nao no destino."""
+    consultas = []
+
+    def _descrever_e_registra(adapter, credenciais, schema, table, conexao=None):
+        consultas.append((schema, table))
+        return _descrever(adapter, credenciais, schema, table, conexao)
+
+    escolhas = _preparar(
+        monkeypatch,
+        [["analytics"], [{"schema": "analytics", "table": "metricas"}]],
+    )
+    monkeypatch.setattr(schemas_auto, "descrever_tabela", _descrever_e_registra)
+    gerar_schemas_automaticos(tmp_path, "proj", None, {}, "destino")
+
+    assert consultas == [("analytics", "metricas")]
+
+
+def test_yaml_schema_sem_source_schema_nao_escreve_a_chave():
+    texto = schemas_auto._yaml_schema(
+        {"table": "t", "schema": "public", "columns": []}
+    )
+    assert "source_schema" not in texto
+    assert "schema: public" in texto
+
+
+def test_yaml_schema_com_source_schema_vazia_nao_escreve():
+    texto = schemas_auto._yaml_schema(
+        {"table": "t", "schema": "public", "source_schema": "", "columns": []}
+    )
+    assert "source_schema" not in texto
+
+
+def test_fluxo_cada_tabela_guarda_o_seu_proprio_schema(tmp_path, monkeypatch):
+    # Tabelas de dois schemas diferentes da origem convivem no mesmo projeto
+    tabelas = [
+        {"schema": "public", "table": "clientes"},
+        {"schema": "staging", "table": "stg_clientes"},
+    ]
+    _preparar(
+        monkeypatch,
+        [
+            ["public", "staging"],
+            [
+                {"schema": "public", "table": "clientes"},
+                {"schema": "staging", "table": "stg_clientes"},
+            ],
+        ],
+        tabelas=tabelas,
+    )
+    gerar_schemas_automaticos(tmp_path, "proj", None, {}, "destino")
+
+    assert "source_schema: public" in (
+        tmp_path / "schemas" / "clientes.yml"
+    ).read_text(encoding="utf-8")
+    assert "source_schema: staging" in (
+        tmp_path / "schemas" / "stg_clientes.yml"
+    ).read_text(encoding="utf-8")

@@ -136,5 +136,118 @@ class TestDagsterIncrementalTemplate(unittest.TestCase):
         self.assertIn('"R_E_C_N_O_"', sql_upsert)
 
 
+class _ConnFalsa:
+    """Conexao que so aceita fechar (carregar_tabela fecha no finally)."""
+
+    def close(self):
+        pass
+
+
+_ENV_BASE = {
+    "DB_ORIGEM_TYPE": "sqlserver",
+    "DB_ORIGEM_HOST": "host", "DB_ORIGEM_PORT": "1433",
+    "DB_ORIGEM_NAME": "banco", "DB_ORIGEM_USER": "u", "DB_ORIGEM_PASSWORD": "p",
+    "DB_ORIGEM_SCHEMA": "dbo",
+    "DB_DESTINO_TYPE": "mysql",
+    "DB_DESTINO_HOST": "host", "DB_DESTINO_PORT": "3303",
+    "DB_DESTINO_NAME": "banco", "DB_DESTINO_USER": "u", "DB_DESTINO_PASSWORD": "p",
+    "DB_DESTINO_SCHEMA": "destino",
+}
+
+
+class TestSchemaDeOrigemPorTabela(unittest.TestCase):
+    """Cada tabela tem de ser lida do schema da origem onde ela mora.
+
+    Caso relatado: .env com DB_ORIGEM_SCHEMA=HumanResources e a tabela em
+    Person -> o ETL montava HumanResources.BusinessEntity e o SQL Server
+    respondia 42S02 "Invalid object name".
+    """
+
+    def _origem_de(self, tabela_extra, env_extra=None, apagar_env=()):
+        modulo = _carregar_modulo_template()
+        env = dict(_ENV_BASE)
+        env.update(env_extra or {})
+        for chave in apagar_env:
+            env.pop(chave, None)
+
+        capturado = {}
+        modulo["ler_env"] = lambda: env
+        modulo["conectar"] = lambda *a, **k: _ConnFalsa()
+
+        def _falso_colunas(conn, tipo, origem):
+            capturado["origem"] = origem
+            return []  # aborta logo apos montar a origem
+
+        modulo["_colunas_origem"] = _falso_colunas
+
+        tabela = {"table": "BusinessEntity", "schema": "destino"}
+        tabela.update(tabela_extra)
+        self.assertEqual(modulo["carregar_tabela"](tabela), 0)
+        self.assertIn("origem", capturado)
+        return capturado["origem"]
+
+    def test_regressao_nao_usa_o_schema_global_do_env(self):
+        # O caso relatado, reproduzido.
+        origem = self._origem_de(
+            {"source_schema": "Person"},
+            env_extra={"DB_ORIGEM_SCHEMA": "HumanResources"},
+        )
+        self.assertEqual(origem, "[Person].[BusinessEntity]")
+        self.assertNotIn("HumanResources", origem)
+
+    def test_source_schema_vence_o_env(self):
+        origem = self._origem_de({"source_schema": "staging"})
+        self.assertEqual(origem, "[staging].[BusinessEntity]")
+
+    def test_chave_schema_do_destino_nao_vira_origem(self):
+        origem = self._origem_de(
+            {"schema": "destino", "source_schema": "Person"}
+        )
+        self.assertEqual(origem, "[Person].[BusinessEntity]")
+        self.assertNotIn("destino", origem)
+
+    def test_sem_source_schema_cai_no_db_origem_schema(self):
+        # Projetos antigos, sem a chave: comportamento anterior preservado.
+        origem = self._origem_de({})
+        self.assertEqual(origem, "[dbo].[BusinessEntity]")
+
+    def test_sem_source_schema_nem_env_cai_no_public(self):
+        origem = self._origem_de({}, apagar_env=("DB_ORIGEM_SCHEMA",))
+        self.assertEqual(origem, "[public].[BusinessEntity]")
+
+    def test_env_vazio_tambem_cai_no_public(self):
+        origem = self._origem_de({}, env_extra={"DB_ORIGEM_SCHEMA": ""})
+        self.assertEqual(origem, "[public].[BusinessEntity]")
+
+    def test_postgres_usa_aspas_duplas_do_schema_de_origem(self):
+        modulo = _carregar_modulo_template()
+        env = dict(_ENV_BASE, DB_ORIGEM_TYPE="postgresql")
+        capturado = {}
+        modulo["ler_env"] = lambda: env
+        modulo["conectar"] = lambda *a, **k: _ConnFalsa()
+        modulo["_colunas_origem"] = lambda conn, tipo, origem: (
+            capturado.update(origem=origem) or []
+        )
+        modulo["carregar_tabela"](
+            {"table": "clientes", "source_schema": "vendas", "schema": "public"}
+        )
+        self.assertEqual(capturado["origem"], '"vendas"."clientes"')
+
+    def test_sql_de_amostra_carrega_o_schema_de_origem(self):
+        # E exatamente esse SELECT que o SQL Server reclamou (42S02).
+        modulo = _carregar_modulo_template()
+        self.assertEqual(
+            modulo["_sql_amostra"]("sqlserver", "[Person].[BusinessEntity]"),
+            "SELECT TOP (0) * FROM [Person].[BusinessEntity]",
+        )
+
+    def test_deltalake_ignora_schema_e_usa_so_a_tabela(self):
+        origem = self._origem_de(
+            {"table": "minha_tabela", "source_schema": "qualquer"},
+            env_extra={"DB_ORIGEM_TYPE": "deltalake"},
+        )
+        self.assertEqual(origem, "minha_tabela")
+
+
 if __name__ == "__main__":
     unittest.main()

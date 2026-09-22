@@ -43,7 +43,12 @@ def ler_env() -> Dict[str, str]:
 
 
 def ler_tabelas() -> List[Dict[str, Any]]:
-    """Lê o main.yml e os schemas, devolvendo as tabelas na ordem de dependência."""
+    """Lê o main.yml e os schemas, devolvendo as tabelas na ordem do manifesto.
+
+    Nenhuma dependência é montada aqui: em ambiente analítico cada tabela tem
+    de poder ser carregada sozinha, sem exigir que outra seja materializada
+    antes. A chave ``foreign_key`` do YAML é documentação do modelo e nada mais.
+    """
     main_path = PROJETO_DIR / "main.yml"
     if not main_path.exists():
         return []
@@ -58,23 +63,7 @@ def ler_tabelas() -> List[Dict[str, Any]]:
             continue
         tabela["path"] = item["path"]
         tabelas.append(tabela)
-    nomes = {t["table"] for t in tabelas}
-    for tabela in tabelas:
-        tabela["deps"] = [d for d in _dependencias(tabela) if d in nomes]
     return tabelas
-
-
-def _dependencias(tabela: Dict[str, Any]) -> List[str]:
-    """Colunas com FK viram dependências de assets (pais antes de filhos)."""
-    deps: List[str] = []
-    for coluna in tabela.get("columns", []):
-        fk = coluna.get("foreign_key")
-        if not fk:
-            continue
-        ref = fk.split("(", 1)[0].rsplit(".", 1)[-1]
-        if ref and ref != tabela["table"] and ref not in deps:
-            deps.append(ref)
-    return deps
 
 
 def ler_schedule_geral() -> Dict[str, Any]:
@@ -839,7 +828,14 @@ def carregar_tabela(tabela: Dict[str, Any], context=None) -> int:
     tipo_origem = env["DB_ORIGEM_TYPE"]
     tipo_destino = env["DB_DESTINO_TYPE"]
     nome = tabela["table"]
-    schema_origem = env.get("DB_ORIGEM_SCHEMA") or "public"
+    # O schema de origem vem do proprio YAML: cada tabela pode morar num
+    # schema diferente da origem. DB_ORIGEM_SCHEMA do .env e so o fallback
+    # para projetos antigos, que nao gravam source_schema.
+    schema_origem = (
+        tabela.get("source_schema")
+        or env.get("DB_ORIGEM_SCHEMA")
+        or "public"
+    )
     schema_destino = tabela.get("schema") or env.get("DB_DESTINO_SCHEMA") or "public"
 
     schedule = tabela.get("schedule") or {}

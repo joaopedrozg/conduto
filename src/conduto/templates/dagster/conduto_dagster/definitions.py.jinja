@@ -30,11 +30,15 @@ def _nome_seguro(nome: str) -> str:
 
 
 def _criar_asset(tabela):
-    """Cria um asset Dagster para a tabela, respeitando as dependências (FKs)."""
-    nome = tabela["table"]
-    deps = [AssetKey(d) for d in tabela.get("deps", [])]
+    """Cria um asset Dagster para a tabela.
 
-    @asset(name=nome, group_name="conduto", deps=deps, description=tabela.get("description", ""))
+    Sem ``deps``: os assets são independentes de propósito, para que qualquer
+    tabela possa ser materializada isoladamente. Uma FK declarada no schema
+    não vira dependência — ela é só documentação do modelo.
+    """
+    nome = tabela["table"]
+
+    @asset(name=nome, group_name="conduto", description=tabela.get("description", ""))
     def _asset(context):
         tabela_atual = next(t for t in TABELAS if t["table"] == nome)
         return carregar_tabela(tabela_atual, context)

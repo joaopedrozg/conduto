@@ -1,11 +1,11 @@
 version: "1.0"
 project: {{ project_name }}
 
-# Schedule do modelo geral (todas as tabelas, na ordem de dependência)
+# Schedule do modelo geral (todas as tabelas, na ordem do manifesto)
 schedule:
   cron: "0 * * * *"
 
-# Lista de tabelas na ordem correta de dependência (ex: clientes antes de pedidos)
+# Tabelas do projeto — nenhuma depende de outra: cada uma carrega sozinha
 tables:
   - path: "schemas/clientes.yml"
   - path: "schemas/pedidos.yml"

@@ -331,7 +331,7 @@
     <table>
       <thead>
         <tr>
-          <th>SGBD</th><th>Schema</th><th>PK</th><th>UNIQUE</th><th>FK</th><th>Engine / ORDER BY</th><th>Notas</th>
+          <th>SGBD</th><th>Schema</th><th>PK</th><th>UNIQUE</th><th>Engine / ORDER BY</th><th>Notas</th>
         </tr>
       </thead>
       <tbody>
@@ -341,7 +341,6 @@
           <td>{{ "banco" if p.schema_recurso == "database" else "schema" }}</td>
           <td>{% if p.suporta_pk %}<span class="badge nn">sim</span>{% else %}<span class="badge def">não</span>{% endif %}</td>
           <td>{% if p.suporta_unique %}<span class="badge nn">sim</span>{% else %}<span class="badge def">não</span>{% endif %}</td>
-          <td>{% if p.suporta_fk %}<span class="badge nn">sim</span>{% else %}<span class="badge def">não</span>{% endif %}</td>
           <td>
             {%- if p.engine_padrao -%}
               <code>{{ p.engine_padrao }}</code>{% if p.requer_order_by %} + <code>ORDER BY</code>{% endif %}

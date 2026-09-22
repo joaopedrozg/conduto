@@ -11,8 +11,8 @@ CLI para criar projetos de migração/ELT de dados: gera o `.env` com as credenc
 - Scaffold completo de projeto ELT em um único comando
 - Fluxo interativo para configurar bancos de origem e destino (PostgreSQL, MySQL, SQL Server, ClickHouse, DuckDB e Delta Lake)
 - Geração do `.env` com as credenciais das duas pontas do duto
-- Manifesto `main.yml` com a ordem de dependência das tabelas
-- Schemas YAML de exemplo (clientes, pedidos e produtos) com PK, FK, `unique` e `default`
+- Manifesto `main.yml` com a lista das tabelas do projeto
+- Schemas YAML de exemplo (clientes, pedidos e produtos) com PK, `unique` e `default` (a FK é só documentação do modelo)
 - Ambiente Python gerenciado por `uv` com `pyyaml`, `jinja2`, `dagster` e `dagster-webserver`
 - Adapta-se automaticamente a um projeto uv existente (gera direto no projeto atual, sem subpasta nem `uv init`)
 - Adapters de conexão com defaults por SGBD (porta, banco e usuário)
@@ -21,7 +21,7 @@ CLI para criar projetos de migração/ELT de dados: gera o `.env` com as credenc
 - Navegação pelos bancos e schemas do servidor — sem precisar digitar o nome do banco
 - Opção de criar banco e schema no destino direto pelo fluxo interativo
 - Geração automática de schemas a partir do banco de origem: lista tabelas e colunas, infere tipos, PK, FK, unique e default
-- Ordenação do `main.yml` por dependência (pais antes de filhos)
+- Assets Dagster independentes: qualquer tabela é materializada sozinha, sem exigir que outra exista ou rode antes
 - Gerenciamento automático de schedules: infere colunas de atualização incremental, cria um schedule padrão de hora em hora por tabela e um schedule para o modelo geral
 - Geração de código Dagster padrão que segue a chave `schedule` de cada schema (`cron`, `mode`, `incremental_column`, `full_load` e `truncate`)
 - Comando `conduto schedules` para (re)gerar os schedules e o código Dagster de um projeto existente
@@ -168,7 +168,7 @@ conduto docs --no-open          # sem abrir o navegador automaticamente
 
 Depois de testar as duas conexões, o conduto pergunta como você quer configurar os schemas das tabelas:
 
-- **Gerar automaticamente**: o conduto lista os schemas do banco de origem e, se houver mais de um, deixa marcar **qualquer quantidade com espaço**; só as tabelas dos schemas marcados entram na lista seguinte, onde você busca por nome e marca/desmarca quais incluir. Depois lê as colunas (tipos, PK, FK, unique, default e nullable) e gera os `schemas/*.yml` e o `main.yml` na ordem de dependência (pais antes de filhos). Com um único schema (MySQL, ClickHouse, Delta Lake) a primeira pergunta não aparece.
+- **Gerar automaticamente**: o conduto lista os schemas do banco de origem e, se houver mais de um, deixa marcar **qualquer quantidade com espaço**; só as tabelas dos schemas marcados entram na lista seguinte, onde você busca por nome e marca/desmarca quais incluir. Depois lê as colunas (tipos, PK, FK, unique, default e nullable) e gera os `schemas/*.yml` e o `main.yml`. Com um único schema (MySQL, ClickHouse, Delta Lake) a primeira pergunta não aparece.
 - **Configurar manualmente**: mantém o comportamento atual e gera os três schemas de exemplo (clientes, pedidos e produtos) para você editar.
 
 ### DDL para o banco de destino
@@ -189,7 +189,7 @@ conduto ddl --apply
 conduto ddl --no-apply
 ```
 
-As flags `--apply` e `--no-apply` pulam a pergunta interativa (útil para scripts). O comando lê o `.env` (credenciais de destino), o `main.yml` (ordem de dependência) e os `schemas/*.yml`, traduzindo tipos e funções (ex.: `gen_random_uuid()`, `clock_timestamp()`) para o SGBD de destino (PostgreSQL, MySQL, SQL Server, ClickHouse, DuckDB ou Delta Lake). Por padrão roda no diretório atual; use `--dir caminho/do/projeto` para outro diretório.
+As flags `--apply` e `--no-apply` pulam a pergunta interativa (útil para scripts). O comando lê o `.env` (credenciais de destino), o `main.yml` e os `schemas/*.yml`, traduzindo tipos e funções (ex.: `gen_random_uuid()`, `clock_timestamp()`) para o SGBD de destino (PostgreSQL, MySQL, SQL Server, ClickHouse, DuckDB ou Delta Lake). Por padrão roda no diretório atual; use `--dir caminho/do/projeto` para outro diretório.
 
 ### Inferindo colunas de tabelas novas
 
@@ -230,11 +230,11 @@ schedule:
   truncate: false           # true limpa a tabela de destino antes de carregar
 ```
 
-- Adiciona o schedule do **modelo geral** no `main.yml` (executa todas as tabelas na ordem de dependência)
+- Adiciona o schedule do **modelo geral** no `main.yml` (executa todas as tabelas na ordem do `main.yml`)
 - Gera o pacote `conduto_dagster/` com os assets e schedules, além do `definitions.py` na raiz — para rodar, é só executar `uv run dagster dev`
 - Adiciona o bloco `[tool.dagster]` no `pyproject.toml` apontando para as definições — o `dagster dev` (versões recentes) exige esse bloco ou um argumento `-m`/`-f` para localizar o código
 
-O código Dagster lê o `main.yml` e os `schemas/*.yml` em tempo de execução: alterar a chave `schedule` de um schema muda o asset/schedule sem precisar regenerar nada. Tabelas com FK viram dependências de assets (pais antes de filhos).
+O código Dagster lê o `main.yml` e os `schemas/*.yml` em tempo de execução: alterar a chave `schedule` de um schema muda o asset/schedule sem precisar regenerar nada. Não há dependências entre assets: a `foreign_key` de cada schema é só documentação do modelo e nunca vira `deps` no Dagster nem `FOREIGN KEY` no destino — qualquer tabela pode ser materializada isoladamente, mesmo que a que ela referencia ainda não exista.
 
 Para regenerar depois (por exemplo, após adicionar uma tabela nova):
 
@@ -316,6 +316,8 @@ meu_projeto/
 
 Guarda as credenciais de origem e destino em variáveis `DB_ORIGEM_*` e `DB_DESTINO_*`:
 
+> `DB_ORIGEM_SCHEMA` é o schema de origem **padrão** — o ETL só usa quando o schema da tabela não está no `source_schema` dela. Com tabelas em schemas diferentes da origem, cada uma leva o seu no YAML.
+
 ```bash
 DB_ORIGEM_TYPE=postgresql
 DB_ORIGEM_HOST=localhost
@@ -353,13 +355,13 @@ CONDUTO_LOTE=50000
 
 ### `main.yml` — manifesto
 
-Define a versão do projeto e a lista de schemas na ordem correta de dependência:
+Define a versão do projeto e a lista de schemas do projeto:
 
 ```yaml
 version: "1.0"
 project: meu_projeto
 
-# Schedule do modelo geral (todas as tabelas, na ordem de dependência)
+# Schedule do modelo geral (todas as tabelas, na ordem do manifesto)
 schedule:
   cron: "0 * * * *"
 
@@ -373,9 +375,19 @@ tables:
 
 Schemas YAML que descrevem as tabelas: tipos, chave primária, foreign keys, `unique` e `default`.
 
+Duas chaves de schema, com funções diferentes:
+
+| Chave | Qual schema é |
+| --- | --- |
+| `schema` | o do **destino** — é o que o `conduto ddl` usa no `CREATE TABLE` |
+| `source_schema` | o da **origem** — é de onde o ETL lê a tabela na hora da carga |
+
+A de origem é gravada por tabela justamente porque uma tabela pode morar num schema e a outra em outro (SQL Server tem `Person`, `HumanResources`, `dbo`...). Sem ela o ETL leria tudo a partir do `DB_ORIGEM_SCHEMA` único do `.env` e falharia com `Invalid object name`. Em projetos antigos, sem a chave, o `DB_ORIGEM_SCHEMA` continua valendo como fallback.
+
 ```yaml
 table: clientes
 schema: public
+source_schema: public
 description: "Tabela de cadastro de clientes"
 schedule:
   cron: "0 * * * *"
@@ -398,8 +410,18 @@ Os três exemplos cobrem padrões comuns de modelagem:
 | Schema | O que demonstra |
 | --- | --- |
 | `clientes.yml` | chave primária, coluna `unique` e `default` com `CURRENT_TIMESTAMP` |
-| `pedidos.yml` | chave estrangeira com `foreign_key: clientes(id)` |
+| `pedidos.yml` | chave estrangeira `foreign_key: clientes(id)` — só documentação |
 | `produtos.yml` | tipos `numeric` e `boolean`, colunas opcionais (`nullable: true`) |
+
+#### Sem dependências entre tabelas
+
+O `foreign_key` é **só documentação do modelo** — nenhuma parte do projeto o transforma em restrição:
+
+- o `conduto ddl` **não** emite `FOREIGN KEY` no `CREATE TABLE`, em nenhum SGBD de destino;
+- o código Dagster **não** cria `deps` entre assets;
+- o `main.yml` **não** é reordenado por topologia de FK.
+
+Em ambiente analítico é exatamente o que se quer: se `pedidos` referencia `clientes`, você ainda carrega `pedidos` sozinha, sem precisar que `clientes` exista ou tenha sido materializada antes. A integridade referencial fica com quem escreve na origem; aqui o que importa é conseguir ler qualquer tabela isoladamente.
 
 #### Tipos customizados
 
