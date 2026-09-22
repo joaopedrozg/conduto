@@ -645,7 +645,7 @@ def _copiar(conn, tipo: str, destino: str, fila, context=None, tabela: Optional[
             return _copiar_postgres_upsert(conn, destino, tabela, fila, context)
         return _copiar_postgres(conn, destino, fila, context)
     if tipo == "clickhouse":
-        return _copiar_clickhouse(conn, destino, fila, context)
+        return _copiar_clickhouse(conn, destino, fila, context, tabela)
     if tipo == "duckdb":
         return _copiar_duckdb(conn, destino, fila, context)
     if tipo == "deltalake":
@@ -730,15 +730,31 @@ def _copiar_duckdb(conn, destino: str, fila, context=None) -> int:
     return total
 
 
-def _copiar_clickhouse(conn, destino: str, fila, context=None) -> int:
-    """Grava os lotes no ClickHouse com o INSERT nativo do client HTTP."""
+_TIPOS_TEXTO_CLICKHOUSE = {"text", "varchar", "char", "enum", "user-defined", "xml", "time", "timetz"}
+
+
+def _copiar_clickhouse(
+    conn, destino: str, fila, context=None, tabela: Optional[Dict[str, Any]] = None
+) -> int:
+    """Grava os lotes no ClickHouse com o INSERT nativo do client HTTP.
+
+    Colunas cujo tipo no schema mapeia para String/FixedString no ClickHouse
+    recebem coercao de bool para str: a origem pode entregar um bool (ex.:
+    TINYINT(1) do MySQL) para uma coluna declarada como texto, e o driver do
+    ClickHouse so aceita str/bytes para colunas de texto.
+    """
     primeiro = fila.get()
     if isinstance(primeiro, Exception):
         raise primeiro
     colunas = list(primeiro)
     if not colunas:
         return 0
-    tabela = destino.replace("`", "")
+    colunas_texto = {
+        c["name"] for c in (tabela or {}).get("columns", [])
+        if (c.get("type") or "").lower() in _TIPOS_TEXTO_CLICKHOUSE
+    }
+    indices_texto = [i for i, nome in enumerate(colunas) if nome in colunas_texto]
+    nome_tabela = destino.replace("`", "")
     total = 0
     while True:
         item = fila.get()
@@ -747,8 +763,16 @@ def _copiar_clickhouse(conn, destino: str, fila, context=None) -> int:
         if isinstance(item, Exception):
             raise item
         linhas = [tuple(_serializar(v) for v in linha) for linha in item]
+        if indices_texto:
+            linhas = [
+                tuple(
+                    str(v) if i in indices_texto and isinstance(v, bool) else v
+                    for i, v in enumerate(linha)
+                )
+                for linha in linhas
+            ]
         if linhas:
-            conn._client.insert(tabela, linhas, column_names=colunas)
+            conn._client.insert(nome_tabela, linhas, column_names=colunas)
             total += len(linhas)
             if context is not None and total % 20000 == 0:
                 context.log.info(f"Inseridas {total} linha(s) em {destino}.")
