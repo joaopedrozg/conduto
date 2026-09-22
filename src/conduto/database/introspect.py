@@ -199,9 +199,7 @@ def limpar_default(default: Optional[str], tipo_sgbd: str) -> Optional[str]:
     elif tipo_sgbd == "sqlserver":
         if "getdate()" in d.lower():
             return "CURRENT_TIMESTAMP"
-        if d.startswith("((") and d.endswith("))"):
-            d = d[1:-1]
-        elif d.startswith("(") and d.endswith(")"):
+        while d.startswith("(") and d.endswith(")"):
             d = d[1:-1]
         if d.startswith("N'") and d.endswith("'"):
             d = d[1:]  # N'valor' -> 'valor'
