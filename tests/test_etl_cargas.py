@@ -54,6 +54,38 @@ def _fila(modulo, colunas, *lotes):
     return fila
 
 
+def _consumir(fila, fim):
+    """Esvazia a fila ate o _FIM, devolvendo o que o produtor colocou nela."""
+    itens = []
+    while True:
+        item = fila.get_nowait()
+        if item is fim:
+            return itens
+        itens.append(item)
+
+
+def _criar_delta(pasta, nome="clientes", linhas=5000):
+    """Grava uma tabela Delta real (id, stamped e nome) para os testes lerem."""
+    import pyarrow as pa
+    from deltalake import write_deltalake
+
+    caminho = str(Path(pasta) / nome)
+    inicio = datetime.datetime(2026, 1, 1)
+    write_deltalake(
+        caminho,
+        pa.table({
+            "id": pa.array(range(linhas), pa.int32()),
+            "stamped": pa.array(
+                [inicio + datetime.timedelta(minutes=i) for i in range(linhas)],
+                pa.timestamp("us"),
+            ),
+            "nome": pa.array([f"cliente {i}" for i in range(linhas)]),
+        }),
+        mode="append",
+    )
+    return caminho
+
+
 # --------------------------------------------------------------------------
 # Falsos: catalogo do SQL Server
 # --------------------------------------------------------------------------
@@ -773,6 +805,192 @@ class TestModosDeCarga(unittest.TestCase):
         )
         self.assertIn("CAST([Nodo] AS NVARCHAR(MAX)) AS [Nodo]", carga["sql"])
         self.assertIn("[ID], CAST(", carga["sql"])
+
+
+# ==========================================================================
+# E. Origem Delta (leitura em lote e carga incremental)
+# ==========================================================================
+
+
+class TestOrigemDelta(unittest.TestCase):
+    """A origem Delta nao abre cursor: aqui moram os 3 bugs conhecidos.
+
+    1. o WHERE do watermark era montado e descartado -- a carga incremental
+       recarregava a tabela inteira;
+    2. ``to_pyarrow_table()`` levava a tabela inteira para a memoria (OOM);
+    3. ``_ultimo_valor`` fazia ``to_pylist()`` da coluna inteira so pro max.
+    """
+
+    def test_produtor_delta_parte_a_carga_em_lotes(self):
+        modulo = _carregar_modulo_template()
+        with tempfile.TemporaryDirectory() as pasta:
+            _criar_delta(pasta, linhas=5000)
+            fila = queue.Queue()
+
+            modulo["_produtor_delta"](_ConexaoDelta(pasta), "clientes", fila, 500)
+            itens = _consumir(fila, modulo["_FIM"])
+
+        colunas, *lotes = itens
+        self.assertEqual(colunas, ["id", "stamped", "nome"])
+        self.assertGreater(len(lotes), 1)  # partido, nao um bloco so
+        self.assertEqual(sum(len(l) for l in lotes), 5000)
+        self.assertTrue(all(len(l) <= 500 for l in lotes))
+
+    def test_produtor_delta_aplica_o_filtro_incremental(self):
+        modulo = _carregar_modulo_template()
+        with tempfile.TemporaryDirectory() as pasta:
+            _criar_delta(pasta, linhas=5000)
+            fila = queue.Queue()
+            filtro = modulo["_filtro_delta"]("id", 2500)
+
+            modulo["_produtor_delta"](
+                _ConexaoDelta(pasta), "clientes", fila, 500, None, filtro
+            )
+            itens = _consumir(fila, modulo["_FIM"])
+
+        colunas, *lotes = itens
+        ids = [linha[0] for lote in lotes for linha in lote]
+        self.assertEqual(len(ids), 2499)  # so o que passa no >
+        self.assertTrue(all(i > 2500 for i in ids))
+
+    def test_produtor_delta_pula_os_lotes_vazios_do_scanner(self):
+        # Com filtro o scanner entrega lote vazio junto com o cheio, e um lote
+        # vazio viraria uma linha em branco no COPY do Postgres.
+        modulo = _carregar_modulo_template()
+        with tempfile.TemporaryDirectory() as pasta:
+            _criar_delta(pasta, linhas=5000)
+            fila = queue.Queue()
+            filtro = modulo["_filtro_delta"]("id", 2500)
+
+            modulo["_produtor_delta"](
+                _ConexaoDelta(pasta), "clientes", fila, 500, None, filtro
+            )
+            itens = _consumir(fila, modulo["_FIM"])
+
+        _, *lotes = itens
+        self.assertTrue(all(len(l) > 0 for l in lotes))
+
+    def test_produtor_delta_respeita_as_colunas_permitidas(self):
+        modulo = _carregar_modulo_template()
+        with tempfile.TemporaryDirectory() as pasta:
+            _criar_delta(pasta, linhas=100)
+            fila = queue.Queue()
+
+            modulo["_produtor_delta"](
+                _ConexaoDelta(pasta), "clientes", fila, 50, {"id", "nome"}
+            )
+            itens = _consumir(fila, modulo["_FIM"])
+
+        colunas, *lotes = itens
+        self.assertEqual(colunas, ["id", "nome"])
+        self.assertEqual(len(lotes[0][0]), 2)
+
+    def test_produtor_delta_manda_erro_para_a_fila(self):
+        modulo = _carregar_modulo_template()
+        fila = queue.Queue()
+
+        modulo["_produtor_delta"](_ConexaoDelta("/nao/existe"), "x", fila, 100)
+        itens = _consumir(fila, modulo["_FIM"])
+
+        self.assertEqual(len(itens), 1)
+        self.assertIsInstance(itens[0], Exception)
+
+    def test_ultimo_valor_delta_devolve_o_maximo(self):
+        modulo = _carregar_modulo_template()
+        with tempfile.TemporaryDirectory() as pasta:
+            _criar_delta(pasta, linhas=5000)
+
+            maximo = modulo["_ultimo_valor"](
+                _ConexaoDelta(pasta), "deltalake", "clientes", "stamped"
+            )
+
+        self.assertEqual(
+            maximo, datetime.datetime(2026, 1, 1) + datetime.timedelta(minutes=4999)
+        )
+
+    def test_ultimo_valor_delta_tudo_nulo_devolve_none(self):
+        import pyarrow as pa
+        from deltalake import write_deltalake
+
+        modulo = _carregar_modulo_template()
+        with tempfile.TemporaryDirectory() as pasta:
+            write_deltalake(
+                str(Path(pasta) / "vazio"),
+                pa.table({"stamped": pa.array([None, None], pa.timestamp("us"))}),
+                mode="append",
+            )
+
+            maximo = modulo["_ultimo_valor"](
+                _ConexaoDelta(pasta), "deltalake", "vazio", "stamped"
+            )
+
+        self.assertIsNone(maximo)
+
+    def test_ultimo_valor_delta_tabela_inexistente_devolve_none(self):
+        modulo = _carregar_modulo_template()
+        maximo = modulo["_ultimo_valor"](
+            _ConexaoDelta("/nao/existe"), "deltalake", "clientes", "stamped"
+        )
+        self.assertIsNone(maximo)
+
+    def test_filtro_delta_monta_expressao_do_pyarrow(self):
+        import pyarrow.dataset
+
+        modulo = _carregar_modulo_template()
+        expr = modulo["_filtro_delta"]("id", 100)
+        self.assertIsInstance(expr, pyarrow.dataset.Expression)
+
+    def _carga_delta(self, schedule, watermark=None):
+        modulo = _carregar_modulo_template()
+        env = dict(_ENV_BASE, DB_ORIGEM_TYPE="deltalake")
+        modulo["ler_env"] = lambda: env
+        modulo["conectar"] = lambda *a, **k: _ConexaoCatalogo()
+        modulo["_colunas_origem"] = lambda *a: ["id", "stamped"]
+        modulo["_truncar"] = lambda *a: None
+        modulo["_ultimo_valor"] = lambda *a: watermark
+        modulo["_copiar"] = lambda *a, **k: 1
+        capturado = {}
+
+        def _falso_produtor_delta(conn, nome, fila, lote, permitidas, filtro=None):
+            capturado.update(nome=nome, filtro=filtro, permitidas=permitidas)
+            fila.put(["id", "stamped"])
+            fila.put(modulo["_FIM"])
+
+        modulo["_produtor_delta"] = _falso_produtor_delta
+
+        capturado["total"] = modulo["carregar_tabela"]({
+            "table": "clientes",
+            "schema": "destino",
+            "schedule": schedule,
+            "columns": [
+                {"name": "id", "type": "integer"},
+                {"name": "stamped", "type": "timestamp"},
+            ],
+        })
+        return capturado
+
+    def test_carregar_tabela_repassa_o_filtro_ao_produtor_delta(self):
+        # O bug: o WHERE era montado e o produtor recebia so o nome da tabela.
+        carga = self._carga_delta(
+            {"mode": "incremental", "incremental_column": "stamped"},
+            watermark=datetime.datetime(2026, 1, 2),
+        )
+        self.assertEqual(carga["nome"], "clientes")
+        self.assertIsNotNone(carga["filtro"])
+
+    def test_carregar_tabela_delta_sem_watermark_passa_filtro_nulo(self):
+        carga = self._carga_delta(
+            {"mode": "incremental", "incremental_column": "stamped"},
+            watermark=None,
+        )
+        self.assertIsNone(carga["filtro"])
+
+    def test_carregar_tabela_delta_full_nao_passa_filtro(self):
+        carga = self._carga_delta(
+            {"mode": "full"}, watermark=datetime.datetime(2026, 1, 2)
+        )
+        self.assertIsNone(carga["filtro"])
+        self.assertEqual(carga["total"], 1)
 
 
 if __name__ == "__main__":

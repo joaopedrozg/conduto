@@ -427,9 +427,19 @@ def _produtor(conn, sql: str, params: Optional[Sequence], fila, lote: int = _LOT
 
 
 def _produtor_delta(
-    conn, tabela_nome: str, fila, lote: int = _LOTE, colunas_permitidas: Optional[Set[str]] = None,
+    conn, tabela_nome: str, fila, lote: int = _LOTE,
+    colunas_permitidas: Optional[Set[str]] = None, filtro=None,
 ) -> None:
-    """Le as linhas de uma tabela Delta (origem) em lotes e coloca na fila."""
+    """Le as linhas de uma tabela Delta (origem) em lotes e coloca na fila.
+
+    Le pelo dataset em ``batch_size=lote`` em vez de ``to_pyarrow_table()``:
+    essa carregava a tabela inteira na memoria e derrubava cargas grandes. O
+    ``filtro`` e a condicao incremental do pyarrow (coluna > watermark), com
+    pushdown para os Parquet -- sem ele o SQL montado em carregar_tabela seria
+    ignorado aqui e a origem Delta recarregava tudo em modo incremental. O
+    scanner entrega lotes vazios junto com os cheios, e um lote vazio viraria
+    uma linha em branco no COPY do Postgres: por isso sao pulados.
+    """
     try:
         from deltalake import DeltaTable
         caminho = f"{conn.base}/{tabela_nome}"
@@ -441,7 +451,12 @@ def _produtor_delta(
         if colunas_permitidas is not None:
             colunas = [c for c in colunas if c in colunas_permitidas]
         fila.put(colunas)
-        for bloco in tabela_delta.to_pyarrow_table().to_batches(max_chunksize=lote):
+        scanner = tabela_delta.to_pyarrow_dataset().scanner(
+            columns=colunas, filter=filtro, batch_size=lote
+        )
+        for bloco in scanner.to_batches():
+            if not bloco.num_rows:
+                continue
             fila.put([[linha[c] for c in colunas] for linha in bloco.to_pylist()])
     except Exception as erro:
         fila.put(erro)
@@ -449,17 +464,33 @@ def _produtor_delta(
         fila.put(_FIM)
 
 
+def _filtro_delta(coluna: str, valor: Any):
+    """Condicao ``coluna > valor`` como Expression do pyarrow (carga incremental).
+
+    A origem Delta nao aceita SQL: sem esta expressao o ``WHERE`` de
+    ``carregar_tabela`` seria descartado e a carga incremental recarregava a
+    tabela inteira. A semantica e a do SQL -- linha com a coluna nula nao passa
+    no ``>``.
+    """
+    import pyarrow.compute as pc
+    return pc.field(coluna) > pc.scalar(valor)
+
+
 def _ultimo_valor(conn, tipo: str, destino: str, coluna: str):
     """Lê o último watermark gravado no destino (None se a tabela não existir)."""
     if tipo == "deltalake":
         try:
             from deltalake import DeltaTable
+            import pyarrow.compute as pc
             tabela = DeltaTable(
                 f"{conn.base}/{destino}",
                 storage_options=conn.storage_options or None,
             )
-            valores = tabela.to_pyarrow_table().column(coluna).to_pylist()
-            return max((v for v in valores if v is not None), default=None)
+            # So a coluna do watermark, projetada no Parquet e agregada no
+            # Arrow: o antigo ``to_pylist()`` materializava a coluna inteira
+            # em lista Python so para achar o maximo, em memoria.
+            projetada = tabela.to_pyarrow_table(columns=[coluna])
+            return pc.max(projetada.column(coluna)).as_py()
         except Exception:
             return None
     sql = f"SELECT MAX({_aspas(tipo, coluna)}) FROM {destino}"
@@ -918,6 +949,7 @@ def carregar_tabela(tabela: Dict[str, Any], context=None) -> int:
             partes_select = [_aspas(tipo_origem, c) for c in colunas]
         cols_select = ", ".join(partes_select)
 
+        filtro_delta = None
         if forcar_full or modo == "full" or not coluna_inc:
             sql = f"SELECT {cols_select} FROM {origem}"
             params = None
@@ -934,6 +966,11 @@ def carregar_tabela(tabela: Dict[str, Any], context=None) -> int:
                     f"ORDER BY {_aspas(tipo_origem, coluna_inc)}"
                 )
                 params = [watermark]
+                if tipo_origem == "deltalake":
+                    # A origem Delta nao abre cursor: o WHERE acima nao vale
+                    # nada la, entao a mesma condicao vira expressao do pyarrow
+                    # e e repassada ao produtor.
+                    filtro_delta = _filtro_delta(coluna_inc, watermark)
 
         inicio = time.monotonic()
         if tipo_origem == "postgresql" and tipo_destino == "postgresql":
@@ -976,7 +1013,9 @@ def carregar_tabela(tabela: Dict[str, Any], context=None) -> int:
             fila = queue.Queue(maxsize=8)
             if tipo_origem == "deltalake":
                 alvo_produtor = _produtor_delta
-                args_produtor = (conn_origem, nome, fila, lote, permitidas)
+                args_produtor = (
+                    conn_origem, nome, fila, lote, permitidas, filtro_delta
+                )
             else:
                 alvo_produtor = _produtor
                 args_produtor = (conn_origem, sql, params, fila, lote)
