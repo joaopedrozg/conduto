@@ -143,12 +143,11 @@ O comando pergunta interativamente:
 2. Credenciais do servidor de origem (host, porta, usuário e senha) — sem precisar digitar o banco
 3. Teste de conexão — se falhar, escolha entre digitar novamente ou continuar mesmo assim
 4. Lista de bancos do servidor de origem — escolha um
-5. Lista de schemas do banco escolhido — escolha um
-6. SGBD de destino
-7. Credenciais de destino, com o mesmo fluxo — e com opção de **criar um banco e/ou schema novo**
-8. Como configurar os schemas: **gerar automaticamente** a partir do banco de origem (tabelas, colunas e tipos inferidos) ou **configurar manualmente** (gera os exemplos)
-9. Gerenciamento de schedules — pergunta se você quer gerar automaticamente o schedule de cada tabela (padrão: hora em hora) e o código Dagster correspondente
-10. Servidor Dagster — pergunta se você quer subir o servidor agora (`uv run dagster dev`) e gera os scripts `run_dagster.ps1`/`run_dagster.sh`
+5. SGBD de destino
+6. Credenciais de destino, com o mesmo fluxo — e com a escolha do **schema de destino** (mais a opção de criar um banco e/ou schema novo)
+7. Como configurar os schemas: **gerar automaticamente** — depois você **flega os schemas de origem** e as tabelas que entram, e é essa marcação que vale — ou **configurar manualmente** — pergunta o schema de origem (é a única vez que ele aparece) e gera os exemplos
+8. Gerenciamento de schedules — pergunta se você quer gerar automaticamente o schedule de cada tabela (padrão: hora em hora) e o código Dagster correspondente
+9. Servidor Dagster — pergunta se você quer subir o servidor agora (`uv run dagster dev`) e gera os scripts `run_dagster.ps1`/`run_dagster.sh`
 
 **Dentro de um projeto uv?** Se o diretório atual já tem `pyproject.toml` (por exemplo, após `uv add conduto`), o conduto se adapta: gera `.env`, `main.yml` e `schemas/` direto no projeto atual e adiciona só as dependências que faltam — sem criar subpasta nem rodar `uv init`. Nesse caso, use `uv run conduto init` (o nome do projeto vira opcional).
 
@@ -168,8 +167,8 @@ conduto docs --no-open          # sem abrir o navegador automaticamente
 
 Depois de testar as duas conexões, o conduto pergunta como você quer configurar os schemas das tabelas:
 
-- **Gerar automaticamente**: o conduto lista os schemas do banco de origem e, se houver mais de um, deixa marcar **qualquer quantidade com espaço**; só as tabelas dos schemas marcados entram na lista seguinte, onde você busca por nome e marca/desmarca quais incluir. Depois lê as colunas (tipos, PK, FK, unique, default e nullable) e gera os `schemas/*.yml` e o `main.yml`. Com um único schema (MySQL, ClickHouse, Delta Lake) a primeira pergunta não aparece.
-- **Configurar manualmente**: mantém o comportamento atual e gera os três schemas de exemplo (clientes, pedidos e produtos) para você editar.
+- **Gerar automaticamente**: o conduto lista os schemas do banco de origem e, se houver mais de um, deixa marcar **qualquer quantidade com espaço**; só as tabelas dos schemas marcados entram na lista seguinte, onde você busca por nome e marca/desmarca quais incluir. Depois lê as colunas (tipos, PK, FK, unique, default e nullable) e gera os `schemas/*.yml` e o `main.yml`. Com um único schema (MySQL, ClickHouse, Delta Lake) a primeira pergunta não aparece. **É essa marcação que decide o schema de origem de cada tabela** — nenhum outro prompt de schema de origem aparece no fluxo.
+- **Configurar manualmente**: pergunta qual é o schema de origem (é o único prompt dele, já que aqui não existe flegagem) e gera os três schemas de exemplo (clientes, pedidos e produtos) para você editar.
 
 ### DDL para o banco de destino
 
