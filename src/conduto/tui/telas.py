@@ -29,16 +29,42 @@ from conduto.tui.tema import CSS_TEMA, Status, cor, glifo
 __all__ = ["TelaConfirmacao", "TelaSelecao", "TelaTexto"]
 
 
-class _InputBusca(Input):
-    """Campo de filtro em que ``esc`` volta para a lista (não cancela a tela)."""
+def _sem_enter(bindings: List[Binding]) -> List[Binding]:
+    """As bindings do widget **menos** ``enter`` — o ``enter`` é do app.
+
+    Com a tecla livre, o binding do app (descrição traduzida no momento do
+    uso) fica ativo e aparece no rodapé como "enter Confirmar"; a ação do
+    app faz o mesmo que o widget faria.
+    """
+    return [
+        vinculo
+        for vinculo in bindings
+        if "enter" not in {chave.strip() for chave in vinculo.key.split(",")}
+    ]
+
+
+class _InputBusca(Input, inherit_bindings=False):
+    """Campo de filtro: ``esc`` volta para a lista, ``enter`` confirma no app."""
 
     BINDINGS = [
-        *Input.BINDINGS,
+        *_sem_enter(Input.BINDINGS),
         Binding("escape", "focar_tabela", show=False),
     ]
 
     def action_focar_tabela(self) -> None:
         self.app.query_one("#tabela", DataTable).focus()
+
+
+class _Entrada(Input, inherit_bindings=False):
+    """Campo de texto em que ``enter`` vai para o app (``action_enviar``)."""
+
+    BINDINGS = _sem_enter(Input.BINDINGS)
+
+
+class _Tabela(DataTable, inherit_bindings=False):
+    """Lista em que ``enter`` vai para o app (``action_confirmar``)."""
+
+    BINDINGS = _sem_enter(DataTable.BINDINGS)
 
 
 class _TelaBase(App):
@@ -79,10 +105,12 @@ class _TelaBase(App):
 class TelaSelecao(_TelaBase):
     """Seleção de opções com marcação individual e "selecionar todas".
 
-    No modo ``MULTIPLA`` a barra de botões ganha alternar/limpar e os atalhos
-    ``espaço``/``a``/``l``; no modo ``UNICA`` vale o cursor da lista (como um
-    rádio). O filtro (quando presente) vem focado: dá para digitar já na
-    abertura, ``esc`` leva para a lista e ``/`` volta para o filtro.
+    No modo ``MULTIPLA`` a barra de ferramentas traz filtro + os botões de
+    marcação (``espaço``/``a``/``l`` também); no modo ``UNICA`` vale o cursor
+    da lista (como um rádio). Confirmar/cancelar são só teclado — ``enter``
+    e ``esc``, com o par no rodapé. O filtro (quando presente) vem focado:
+    dá para digitar já na abertura, ``esc`` leva para a lista e ``/`` volta
+    para o filtro.
     """
 
     def __init__(
@@ -112,6 +140,10 @@ class TelaSelecao(_TelaBase):
             self.bind("l", "limpar", description=t("Limpar"))
         if com_busca:
             self.bind("slash", "focar_busca", description=t("Filtrar"))
+        # enter confirma em qualquer foco (no rodapé é a dica de confirmar);
+        # o widget focado tem prioridade, então lista/filtro/botão seguem
+        # respondendo primeiro — este binding é o fallback e o rótulo.
+        self.bind("enter", "confirmar", description=t("Confirmar"))
 
     # ------------------------------------------------------------------
     # Montagem
@@ -121,27 +153,35 @@ class TelaSelecao(_TelaBase):
         yield Static(self.pergunta, id="pergunta")
         if self.instrucao:
             yield Static(self.instrucao, id="dica")
-        if self.com_busca:
-            yield _InputBusca(placeholder=t("Digite para filtrar..."), id="busca")
-        yield Horizontal(*self._botoes(), id="acoes")
-        yield DataTable(id="tabela", cursor_type="row", zebra_stripes=False)
+        barra = self._barra()
+        if barra:
+            yield Horizontal(*barra, id="acoes")
+        yield _Tabela(id="tabela", cursor_type="row", zebra_stripes=False)
         yield Static("", id="status")
         yield Footer()
 
-    def _botoes(self) -> List[Any]:
-        botoes: List[Any] = []
+    def _barra(self) -> List[Any]:
+        """Barra de ferramentas: filtro à esquerda, marcação à direita.
+
+        Sem pares de botões grandes: confirmar é ``enter`` e cancelar é
+        ``esc``, os dois visíveis no rodapé. Os botões daqui são chips de
+        uma linha — ações específicas desta tela (``espaço``/``a``/``l``
+        fazem o mesmo pelo teclado).
+        """
+        itens: List[Any] = []
+        if self.com_busca:
+            itens.append(
+                _InputBusca(placeholder=t("Digite para filtrar..."), id="busca")
+            )
         if self.modelo.modo == MULTIPLA:
-            botoes += [
+            if not itens:
+                itens.append(Static("", id="espacador"))
+            itens += [
                 Button(t("Alternar"), id="btn-alternar"),
                 Button(t("Selecionar todas"), id="btn-todas"),
                 Button(t("Limpar"), id="btn-limpar"),
             ]
-        botoes += [
-            Static("", id="espacador"),
-            Button(t("Confirmar"), id="btn-confirmar", variant="primary"),
-            Button(t("Cancelar"), id="btn-cancelar"),
-        ]
-        return botoes
+        return itens
 
     def on_mount(self) -> None:
         self._desenhar_linhas()
@@ -282,11 +322,6 @@ class TelaSelecao(_TelaBase):
         self.modelo.filtrar(self.query_one("#busca", _InputBusca).value)
         self._desenhar_linhas()
 
-    @on(Input.Submitted, "#busca")
-    def _ao_enviar_busca(self, evento: Input.Submitted) -> None:
-        del evento
-        self.action_confirmar()
-
     @on(DataTable.RowHighlighted, "#tabela")
     def _ao_realcar_linha(self, evento: DataTable.RowHighlighted) -> None:
         if self.modelo.modo != UNICA or not self.ordem:
@@ -312,8 +347,6 @@ class TelaSelecao(_TelaBase):
             "btn-alternar": self.action_alternar,
             "btn-todas": self.action_marcar_todas,
             "btn-limpar": self.action_limpar,
-            "btn-confirmar": self.action_confirmar,
-            "btn-cancelar": self.action_cancelar,
         }
         acao = acoes.get(evento.button.id or "")
         if acao is not None:
@@ -321,7 +354,10 @@ class TelaSelecao(_TelaBase):
 
 
 class TelaTexto(_TelaBase):
-    """Campo de texto (ou senha) — ``enter`` confirma, ``esc`` cancela."""
+    """Campo de texto (ou senha) — ``enter`` confirma, ``esc`` cancela.
+
+    Só o campo, sem botões: o rodapé mostra os dois atalhos.
+    """
 
     def __init__(
         self,
@@ -335,41 +371,34 @@ class TelaTexto(_TelaBase):
         self.valor_inicial = valor_inicial
         self.senha = senha
         self.instrucao = instrucao or ""
+        self.bind("enter", "enviar", description=t("Confirmar"))
 
     def compose(self) -> ComposeResult:
         yield Static(self.pergunta, id="pergunta")
         if self.instrucao:
             yield Static(self.instrucao, id="dica")
-        yield Horizontal(
-            Input(
-                value=self.valor_inicial,
-                password=self.senha,
-                placeholder=t("Digite..."),
-                id="entrada",
-            ),
-            Button(t("Confirmar"), id="btn-confirmar", variant="primary"),
-            Button(t("Cancelar"), id="btn-cancelar"),
-            id="acoes",
+        yield _Entrada(
+            value=self.valor_inicial,
+            password=self.senha,
+            placeholder=t("Digite..."),
+            id="entrada",
         )
         yield Footer()
 
     def on_mount(self) -> None:
-        self.query_one("#entrada", Input).focus()
+        self.query_one("#entrada", _Entrada).focus()
 
-    @on(Input.Submitted, "#entrada")
-    def _ao_enviar(self, evento: Input.Submitted) -> None:
-        self._finalizar(evento.value)
-
-    @on(Button.Pressed)
-    def _ao_pressionar_botao(self, evento: Button.Pressed) -> None:
-        if evento.button.id == "btn-confirmar":
-            self._finalizar(self.query_one("#entrada", Input).value)
-        elif evento.button.id == "btn-cancelar":
-            self.action_cancelar()
+    def action_enviar(self) -> None:
+        """``enter``: devolve o texto do campo (mostrado no rodapé)."""
+        self._finalizar(self.query_one("#entrada", Input).value)
 
 
 class TelaConfirmacao(_TelaBase):
-    """Pergunta de sim/não: ``enter`` aceita o padrão focado, ``y``/``n`` direto."""
+    """Pergunta de sim/não — ``y``/``n`` respondem, ``enter`` aceita o padrão.
+
+    Sem botões: o padrão aparece ao lado da pergunta (``[Sim/não]``, letra
+    maiúscula = padrão) e as respostas ficam no rodapé.
+    """
 
     def __init__(
         self,
@@ -383,22 +412,24 @@ class TelaConfirmacao(_TelaBase):
         self.instrucao = instrucao or ""
         self.bind("y", "sim", description=t("Sim"))
         self.bind("n", "nao", description=t("Não"))
+        self.bind("enter", "responder", description=t("Confirmar"))
 
     def compose(self) -> ComposeResult:
-        yield Static(self.pergunta, id="pergunta")
+        yield Static(self._pergunta_com_padrao(), id="pergunta")
         if self.instrucao:
             yield Static(self.instrucao, id="dica")
-        yield Horizontal(
-            Static("", id="espacador"),
-            Button(t("Não"), id="btn-nao"),
-            Button(t("Sim"), id="btn-sim", variant="primary"),
-            id="acoes",
-        )
         yield Footer()
 
-    def on_mount(self) -> None:
-        alvo = "#btn-sim" if self.padrao else "#btn-nao"
-        self.query_one(alvo, Button).focus()
+    def _pergunta_com_padrao(self) -> Text:
+        """Pergunta + marca do padrão em azul (letra maiúscula = padrão)."""
+        sim, nao = t("sim"), t("não")
+        if self.padrao:
+            rotulo = f"[{sim.capitalize()}/{nao.lower()}]"
+        else:
+            rotulo = f"[{sim.lower()}/{nao.capitalize()}]"
+        texto = Text(self.pergunta)
+        texto.append(f"  {rotulo}", style=cor(Status.INFO))
+        return texto
 
     def action_sim(self) -> None:
         self._finalizar(True)
@@ -406,9 +437,6 @@ class TelaConfirmacao(_TelaBase):
     def action_nao(self) -> None:
         self._finalizar(False)
 
-    @on(Button.Pressed)
-    def _ao_pressionar_botao(self, evento: Button.Pressed) -> None:
-        if evento.button.id == "btn-sim":
-            self.action_sim()
-        elif evento.button.id == "btn-nao":
-            self.action_nao()
+    def action_responder(self) -> None:
+        """``enter``: aceita o padrão marcado ao lado da pergunta."""
+        self._finalizar(self.padrao)

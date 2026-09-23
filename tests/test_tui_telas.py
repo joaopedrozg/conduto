@@ -64,7 +64,7 @@ def test_tela_multipla_mostra_pergunta_lista_e_status():
     _rodar(cenario)
 
 
-def test_tela_multipla_traz_os_botoes_e_a_dica_de_busca():
+def test_tela_multipla_traz_os_botoes_de_marcar_e_a_dica_de_busca():
     async def cenario():
         app = TelaSelecao(
             pergunta="Selecione os schemas da origem:",
@@ -73,11 +73,67 @@ def test_tela_multipla_traz_os_botoes_e_a_dica_de_busca():
         )
         async with app.run_test() as pilot:
             await pilot.pause()
-            for botao in ("#btn-alternar", "#btn-todas", "#btn-limpar", "#btn-confirmar", "#btn-cancelar"):
+            for botao in ("#btn-alternar", "#btn-todas", "#btn-limpar"):
                 assert len(app.query(botao)) == 1, botao
+            # confirmar/cancelar são teclado (enter/esc), não botões
+            assert len(app.query("#btn-confirmar")) == 0
+            assert len(app.query("#btn-cancelar")) == 0
             assert "(setas navegam, a marca todas)" in str(app.query_one("#dica").content)
             # o filtro vem focado: já dá para digitar na abertura
             assert app.query_one("#busca", Input).has_focus
+        return None
+
+    _rodar(cenario)
+
+
+def test_rodape_sempre_mostra_enter_como_confirmar():
+    """A dica de confirmar some se o widget focado engolir a tecla ``enter``."""
+
+    async def cenario():
+        selecao = TelaSelecao(pergunta="Escolha:", modelo=_multipla())
+        async with selecao.run_test() as pilot:
+            await pilot.pause()
+            assert selecao.query_one("#busca", Input).has_focus  # caso que perdia
+            atual = selecao.screen.active_bindings["enter"]
+            assert atual.binding.description == "Confirmar"
+
+        texto = TelaTexto(pergunta="Host:")
+        async with texto.run_test() as pilot:
+            await pilot.pause()
+            atual = texto.screen.active_bindings["enter"]
+            assert atual.binding.description == "Confirmar"
+
+        confirmacao = TelaConfirmacao(pergunta="Aplicar?")
+        async with confirmacao.run_test() as pilot:
+            await pilot.pause()
+            atual = confirmacao.screen.active_bindings["enter"]
+            assert atual.binding.description == "Confirmar"
+        return None
+
+    _rodar(cenario)
+
+
+def test_nenhuma_tela_tem_botao_grande_de_confirmar_ou_de_sim_nao():
+    """Regressão do UX: os pares grandes (Confirmar/Cancelar, Sim/Não) saíram."""
+
+    async def cenario():
+        selecao = TelaSelecao(pergunta="Escolha:", modelo=_multipla())
+        async with selecao.run_test() as pilot:
+            await pilot.pause()
+            assert len(selecao.query("#btn-confirmar")) == 0
+            assert len(selecao.query("#btn-cancelar")) == 0
+
+        texto = TelaTexto(pergunta="Host:")
+        async with texto.run_test() as pilot:
+            await pilot.pause()
+            assert len(texto.query("#btn-confirmar")) == 0
+            assert len(texto.query("#btn-cancelar")) == 0
+
+        confirmacao = TelaConfirmacao(pergunta="Aplicar?")
+        async with confirmacao.run_test() as pilot:
+            await pilot.pause()
+            assert len(confirmacao.query("#btn-sim")) == 0
+            assert len(confirmacao.query("#btn-nao")) == 0
         return None
 
     _rodar(cenario)
@@ -91,6 +147,7 @@ def test_tela_unica_nao_traz_botao_de_marcar_todas():
             assert len(app.query("#btn-todas")) == 0
             assert len(app.query("#btn-limpar")) == 0
             assert len(app.query("#busca")) == 0  # sem busca não há onde filtrar
+            assert len(app.query("#acoes")) == 0  # nem barra vazia
             assert app.query_one("#tabela", DataTable).has_focus
         return None
 
@@ -102,8 +159,8 @@ def test_tela_unica_nao_traz_botao_de_marcar_todas():
 # ---------------------------------------------------------------------------
 
 
-def test_os_botoes_tem_altura_e_largura_para_o_rotulo():
-    """Regression do CSS da barra de botões: borda + rótulo cortado = erro visual."""
+def test_os_botoes_da_barra_sao_chips_compactos_com_o_rotulo_inteiro():
+    """Regressão do CSS da barra: chip de 1 linha, sem borda grossa, rótulo inteiro."""
 
     async def cenario():
         app = TelaSelecao(pergunta="Escolha:", modelo=_multipla())
@@ -113,16 +170,17 @@ def test_os_botoes_tem_altura_e_largura_para_o_rotulo():
                 "#btn-alternar": "Alternar",
                 "#btn-todas": "Selecionar todas",
                 "#btn-limpar": "Limpar",
-                "#btn-confirmar": "Confirmar",
-                "#btn-cancelar": "Cancelar",
             }
             for seletor, rotulo in esperado.items():
                 botao = app.query_one(seletor)
-                # `region`/`outer_size` incluem a borda `tall` (2 linhas);
-                # `.size` é só a área de conteúdo (1 linha para o rótulo).
-                assert botao.region.height >= 3, seletor  # borda + linha do rótulo
-                assert botao.size.height >= 1, seletor  # o rótulo cabe em uma linha
-                assert botao.size.width >= len(rotulo) + 2, seletor
+                # chip flat: uma linha só (sem as 2 da borda `tall`)
+                assert botao.region.height == 1, seletor
+                assert botao.size.height == 1, seletor
+                # o rótulo cabe inteiro (padding 0 1 de cada lado)
+                assert botao.region.width >= len(rotulo) + 2, seletor
+                assert botao.size.width >= len(rotulo), seletor
+            # a barra como um todo não pode voltar a ficar alta demais
+            assert app.query_one("#acoes").region.height == 3
         return None
 
     _rodar(cenario)
@@ -336,14 +394,14 @@ def test_enter_na_lista_devolve_os_valores_marcados_na_ordem_original():
     assert _rodar(cenario) == ["a", "c"]
 
 
-def test_botao_confirmar_devolve_o_que_esta_marcado():
+def test_enter_devolve_o_que_foi_marcado():
     async def cenario():
         app = TelaSelecao(pergunta="Escolha:", modelo=_multipla())
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.click("#btn-todas")
-            await pilot.pause()
-            await pilot.click("#btn-confirmar")
+            await pilot.press("escape")  # sai do filtro, foca a lista
+            await pilot.press("a")  # marca todas pelo atalho
+            await pilot.press("enter")  # confirma pela lista
         return app.return_value
 
     assert _rodar(cenario) == ["a", "b", "c"]
@@ -354,29 +412,24 @@ def test_nada_marcado_confirma_com_lista_vazia():
         app = TelaSelecao(pergunta="Escolha:", modelo=_multipla())
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.click("#btn-confirmar")
+            await pilot.press("enter")  # enter no filtro confirma sem marcar
         return app.return_value
 
     assert _rodar(cenario) == []
 
 
-def test_esc_e_botao_cancelar_devolvem_none():
-    async def cenario_esc():
+def test_esc_cancela_tanto_da_lista_quanto_do_filtro():
+    async def cenario():
         app = TelaSelecao(pergunta="Escolha:", modelo=_multipla())
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.press("escape")
-        return app.return_value
-
-    async def cenario_botao():
-        app = TelaSelecao(pergunta="Escolha:", modelo=_multipla())
-        async with app.run_test() as pilot:
+            await pilot.press("escape")  # filtro -> lista
+            await pilot.press("escape")  # lista -> cancela de verdade
             await pilot.pause()
-            await pilot.click("#btn-cancelar")
+            assert app.return_code is not None  # o app saiu, não só perdeu foco
         return app.return_value
 
-    assert _rodar(cenario_esc) is None
-    assert _rodar(cenario_botao) is None
+    assert _rodar(cenario) is None
 
 
 def test_ctrl_c_cancela_mesmo_com_o_foco_no_filtro():
@@ -481,12 +534,14 @@ def test_tela_texto_em_branco_devolve_o_padrao():
     assert _rodar(cenario) == "localhost"
 
 
-def test_tela_texto_botao_cancelar_devolve_none():
+def test_tela_texto_esc_devolve_none():
     async def cenario():
         app = TelaTexto(pergunta="Host:", valor_inicial="localhost")
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.click("#btn-cancelar")
+            await pilot.press("escape")
+            await pilot.pause()
+            assert app.return_code is not None  # saiu de verdade
         return app.return_value
 
     assert _rodar(cenario) is None
@@ -539,15 +594,38 @@ def test_confirmacao_tecla_y_e_n_respondem_direto():
     assert _rodar(cenario_nao) is False
 
 
-def test_confirmacao_botao_nao_com_padrao_sim():
+def test_confirmacao_enter_com_padrao_nao_devolve_false():
     async def cenario():
-        app = TelaConfirmacao(pergunta="Aplicar?", padrao=True)
+        app = TelaConfirmacao(pergunta="Aplicar?", padrao=False)
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.click("#btn-nao")
+            await pilot.press("enter")
         return app.return_value
 
     assert _rodar(cenario) is False
+
+
+def test_confirmacao_mostra_o_padrao_ao_lado_da_pergunta():
+    """A letra maiúscula do par ``[Sim/não]`` diz qual é o padrão."""
+
+    async def cenario_padrao_sim():
+        app = TelaConfirmacao(pergunta="Aplicar?", padrao=True)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            conteudo = str(app.query_one("#pergunta").content)
+            await pilot.press("escape")
+            return conteudo
+
+    async def cenario_padrao_nao():
+        app = TelaConfirmacao(pergunta="Aplicar?", padrao=False)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            conteudo = str(app.query_one("#pergunta").content)
+            await pilot.press("escape")
+            return conteudo
+
+    assert "[Sim/não]" in _rodar(cenario_padrao_sim)
+    assert "[sim/Não]" in _rodar(cenario_padrao_nao)
 
 
 def test_confirmacao_esc_devolve_none():
