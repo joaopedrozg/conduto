@@ -277,9 +277,25 @@ def _instalar_dependencias_sgbd(adapter) -> bool:
     return ok_dep
 
 
+# SGBD em que schema é o próprio banco: não existe escolha de schema à parte.
+_SCHEMA_IGUAL_A_BANCO = ("mysql", "clickhouse", "deltalake")
+
+
 def coletar_credenciais(
-    rotulo: str, permitir_criar: bool = False, mostrar_particularidades: bool = False
+    rotulo: str,
+    permitir_criar: bool = False,
+    mostrar_particularidades: bool = False,
+    pedir_schema: bool = True,
 ):
+    """Pergunta SGBD, credenciais e banco do ``rotulo`` (origem ou destino).
+
+    ``pedir_schema=False`` deixa o schema sem pergunta: quem decide é quem chama,
+    que no modo automático são os schemas flegados na geração (a marcação é a
+    oficial) e no manual o prompt é chamado depois, já com o modo decidido.
+
+    Devolve ``(credenciais, adapter, conectou)`` — o chamador precisa saber se há
+    conexão para decidir se ainda há algo a perguntar.
+    """
     while True:
         console.print(separador())
         sgbd = selecionar("Selecione o SGBD de {rotulo}:", ADAPTERS.keys(), rotulo=rotulo)
@@ -386,10 +402,14 @@ def coletar_credenciais(
         if conectado:
             banco = _escolher_banco(adapter, credenciais, rotulo, permitir_criar)
             credenciais["database"] = banco
-            if adapter.tipo in ("mysql", "clickhouse", "deltalake"):
+            if adapter.tipo in _SCHEMA_IGUAL_A_BANCO:
                 credenciais["schema"] = banco
-            else:
+            elif pedir_schema:
                 credenciais["schema"] = _escolher_schema(adapter, credenciais, rotulo, permitir_criar)
+            else:
+                # Sem pergunta: fica no default do SGBD, que serve de fallback no
+                # .env — cada YAML gerado carrega o seu `source_schema` e manda na carga.
+                credenciais["schema"] = schema_padrao_sgbd(adapter, credenciais)
         else:
             # continua mesmo sem conexão: banco/schema digitados manualmente
             banco = pedir("DATABASE:", padrao=adapter.banco_padrao)
@@ -399,7 +419,7 @@ def coletar_credenciais(
         if mostrar_particularidades:
             _mostrar_particularidades(adapter)
 
-        return credenciais, adapter
+        return credenciais, adapter, conectado
 
 
 def _escolher_banco(adapter, credenciais: dict, rotulo: str, permitir_criar: bool) -> str:
@@ -470,6 +490,19 @@ def _escolher_schema(adapter, credenciais: dict, rotulo: str, permitir_criar: bo
             console.print(erro("Falha ao criar o schema: {erro}", erro=exc))
 
 
+def _schema_origem_manual(adapter, credenciais: dict, conectou: bool) -> str:
+    """Schema de origem no modo manual — é o único prompt, logo o oficial.
+
+    No modo automático quem escolhe são os schemas flegados dentro de
+    ``gerar_schemas_automaticos``, por isso não passamos por aqui. Sem conexão
+    (credenciais digitadas na mão) e nos SGBD em que schema == banco o valor já
+    veio resolvido de ``coletar_credenciais``, então não há o que listar.
+    """
+    if not conectou or adapter.tipo in _SCHEMA_IGUAL_A_BANCO:
+        return credenciais["schema"]
+    return _escolher_schema(adapter, credenciais, t("origem"), permitir_criar=False)
+
+
 @app.command(help=t(
     "Passo 1 - cria/adapta o projeto ELT: .env, main.yml, schemas/ e ambiente uv.\n"
     "\n"
@@ -502,8 +535,10 @@ def init(
             nome=nome_projeto,
         ))
 
-    origem, adapter_origem = coletar_credenciais(t("origem"))
-    destino, adapter_destino = coletar_credenciais(
+    origem, adapter_origem, origem_conectou = coletar_credenciais(
+        t("origem"), pedir_schema=False
+    )
+    destino, adapter_destino, _ = coletar_credenciais(
         t("destino"), permitir_criar=True, mostrar_particularidades=True
     )
 
@@ -514,6 +549,10 @@ def init(
     if modo_schemas is None:
         cancelar()
     gerar_automatico = modo_schemas == opcao_auto
+    if not gerar_automatico:
+        # Manual: este é o único prompt de schema de origem, então ele vale.
+        # No automático quem manda é a marcação de schemas feita na geração.
+        origem["schema"] = _schema_origem_manual(adapter_origem, origem, origem_conectou)
 
     context = {
         "project_name": nome_projeto,
