@@ -15,6 +15,7 @@ from conduto.database.adapters import Adapter
 from conduto.database.introspect import filtrar_tabelas_por_schema, listar_tabelas
 from conduto.schemas import schemas_auto
 from conduto.schemas.schemas_auto import _escolher_schemas, gerar_schemas_automaticos
+from conduto.tui.tema import Status
 
 
 TABELAS = [
@@ -233,6 +234,36 @@ def test_escolher_schemas_usa_a_mesma_instrucao_de_busca(monkeypatch):
     _escolher_schemas(TABELAS)
     assert escolhas.ultima["kwargs"]["instrucao"] == schemas_auto.INSTRUCAO_BUSCA
     assert escolhas.ultima["kwargs"]["use_search_filter"] is True
+
+
+def test_escolher_schemas_vem_com_status_de_informacao_e_a_contagem(monkeypatch):
+    """A tela pinta a linha com o status: aqui azul (informativo) + nº de tabelas."""
+    escolhas = _Escolhas([["public"]])
+    monkeypatch.setattr(schemas_auto, "multi_selecionar", escolhas)
+    _escolher_schemas(TABELAS)
+
+    opcoes = escolhas.ultima["escolhas"]
+    assert [c.status for c in opcoes] == [Status.INFO, Status.INFO, Status.INFO]
+    assert [c.detalhe for c in opcoes] == ["1 tabela(s)", "2 tabela(s)", "1 tabela(s)"]
+
+
+def test_fluxo_tabela_com_yaml_ja_gerado_sai_com_atencao(tmp_path, monkeypatch):
+    """Regenerar sobrescreve o YAML que você pode ter editado: o aviso é âmbar."""
+    (tmp_path / "schemas").mkdir()
+    (tmp_path / "schemas" / "clientes.yml").write_text("table: clientes\n", encoding="utf-8")
+
+    escolhas = _preparar(
+        monkeypatch,
+        [["public"], [{"schema": "public", "table": "clientes"}]],
+    )
+    gerar_schemas_automaticos(tmp_path, "proj", None, {}, "destino")
+
+    por_titulo = {c.title: c for c in escolhas.registros[1]["escolhas"]}
+    assert por_titulo["public.clientes"].status is Status.AVISO
+    assert por_titulo["public.clientes"].detalhe == "já existe"
+    # a nova continua neutra: nada a temer ao gerar
+    assert por_titulo["public.pedidos"].status is Status.NEUTRO
+    assert por_titulo["public.pedidos"].detalhe == ""
 
 
 # ---------------------------------------------------------------------------
