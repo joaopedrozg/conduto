@@ -347,13 +347,38 @@ def _listar_tabelas_postgres(credenciais: dict) -> List[Dict[str, str]]:
         conn.close()
 
 
+def _resolver_tipo_postgres(data_type: Optional[str],
+                            udt_name: Optional[str]) -> str:
+    """Devolve o tipo real de uma coluna lida do information_schema.
+
+    O ``data_type`` do PostgreSQL so nomeia o que e tipo de ``pg_catalog``. A
+    propria definicao da view (``pg_get_viewdef``) mostra a regra::
+
+        CASE WHEN t.typelem <> 0 AND t.typlen = -1 THEN 'ARRAY'
+             WHEN nt.nspname = 'pg_catalog' THEN format_type(...)
+             ELSE 'USER-DEFINED' END
+
+    Ou seja, cai em ``USER-DEFINED`` tudo que existe fora de ``pg_catalog``:
+    extensoes (``ltree``, ``citext``, ``geometry``), enumerados e compostos
+    criados pelo usuario, e dominio sobre algum deles. Nesses casos o nome
+    verdadeiro esta em ``udt_name`` -- para dominio, o da base, por causa do
+    ``COALESCE(bt.typname, t.typname)`` da view.
+
+    Sem esta resolucao todo tipo customizado do PostgreSQL perdia a
+    identidade na introspecao e nunca alcancava ``_TIPOS_CUSTOMIZADOS``.
+    """
+    if (data_type or "").strip().upper() != "USER-DEFINED":
+        return data_type or ""
+    return (udt_name or "").strip() or (data_type or "")
+
+
 def _descrever_tabela_postgres(credenciais: dict, schema: str, table: str, conexao=None) -> Dict[str, Any]:
     proprio = conexao is None
     conn = conexao or conectar_postgres(credenciais)
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT column_name, data_type, character_maximum_length,
+                SELECT column_name, data_type, udt_name, character_maximum_length,
                        numeric_precision, numeric_scale, is_nullable, column_default
                 FROM information_schema.columns
                 WHERE table_schema = %s AND table_name = %s
@@ -403,10 +428,11 @@ def _descrever_tabela_postgres(credenciais: dict, schema: str, table: str, conex
             conn.close()
 
     colunas = []
-    for nome, tipo, comprimento, precisao, escala, is_nullable, default in colunas_raw:
+    for nome, tipo, udt, comprimento, precisao, escala, is_nullable, default in colunas_raw:
+        tipo_real = _resolver_tipo_postgres(tipo, udt)
         colunas.append({
             "name": nome,
-            "type": inferir_tipo(tipo, comprimento, precisao, escala),
+            "type": inferir_tipo(tipo_real, comprimento, precisao, escala),
             "nullable": is_nullable == "YES",
             "primary_key": nome in pks,
             "unique": nome in uniques and nome not in pks,

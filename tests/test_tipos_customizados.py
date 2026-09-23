@@ -304,6 +304,98 @@ class _ConexaoFalsa:
         self.fechada = True
 
 
+def _linha_postgres(nome, data_type, udt_name, comprimento=None,
+                    precisao=None, escala=None):
+    return (nome, data_type, udt_name, comprimento, precisao, escala, "YES", None)
+
+
+def _descrever_postgres(linhas):
+    from conduto.database.introspect import _descrever_tabela_postgres
+
+    # colunas, primary key, unique, foreign key -- nessa ordem
+    conn = _ConexaoFalsa(linhas, [], [], [])
+    descrito = _descrever_tabela_postgres({}, "public", "tipos", conn)
+    return descrito, conn.cursor_obj
+
+
+def test_postgres_le_udt_name_para_resolver_user_defined():
+    linhas = [
+        _linha_postgres("caminho", "USER-DEFINED", "ltree"),
+        _linha_postgres("texto_ci", "USER-DEFINED", "citext"),
+        _linha_postgres("meta", "USER-DEFINED", "hstore"),
+        _linha_postgres("geo", "USER-DEFINED", "geometry"),
+    ]
+    descrito, cur = _descrever_postgres(linhas)
+
+    assert [c["type"] for c in descrito["columns"]] == [
+        "ltree", "citext", "hstore", "geometry",
+    ]
+    assert any("udt_name" in sql for sql in cur.sqls), (
+        "a consulta nao le udt_name: todo tipo customizado volta a virar "
+        "USER-DEFINED"
+    )
+
+
+def test_postgres_enumerado_e_composto_degradam_para_texto():
+    linhas = [
+        _linha_postgres("status", "USER-DEFINED", "status_t"),
+        _linha_postgres("endereco", "USER-DEFINED", "endereco_t"),
+    ]
+    descrito, _ = _descrever_postgres(linhas)
+
+    assert [c["type"] for c in descrito["columns"]] == ["text", "text"]
+
+
+def test_postgres_dominio_ja_vem_resolvido_com_a_geometria():
+    # verified: information_schema resolve o dominio pro tipo base e devolve
+    # character_maximum_length/numeric_precision reais.
+    linhas = [
+        _linha_postgres("email", "character varying", "varchar", comprimento=120),
+        _linha_postgres("grana", "numeric", "numeric", precisao=12, escala=2),
+        _linha_postgres("idade", "integer", "int4", precisao=32, escala=0),
+    ]
+    descrito, _ = _descrever_postgres(linhas)
+
+    assert [c["type"] for c in descrito["columns"]] == [
+        "varchar(120)", "numeric(12, 2)", "integer",
+    ]
+
+
+def test_postgres_array_e_tipos_de_pg_catalog_passam_intactos():
+    linhas = [
+        _linha_postgres("tags", "ARRAY", "_text"),
+        _linha_postgres("ids", "ARRAY", "_int4"),
+        _linha_postgres("rede", "inet", "inet"),
+        _linha_postgres("flag", "bit varying", "varbit"),
+        _linha_postgres("doc", "xml", "xml"),
+        _linha_postgres("periodo", "interval", "interval"),
+    ]
+    descrito, _ = _descrever_postgres(linhas)
+
+    assert [c["type"] for c in descrito["columns"]] == [
+        "array", "array", "inet", "varbit", "xml", "interval",
+    ]
+
+
+def test_postgres_udt_nulo_nao_quebra():
+    # defesa: se udt_name vier nulo, cai no proprio marcador e vira texto
+    linhas = [_linha_postgres("x", "USER-DEFINED", None)]
+    descrito, _ = _descrever_postgres(linhas)
+    assert descrito["columns"][0]["type"] == "text"
+
+
+def test_postgres_preserva_pk_e_nullable_no_meio_da_resolucao():
+    from conduto.database.introspect import _descrever_tabela_postgres
+
+    colunas = [_linha_postgres("caminho", "USER-DEFINED", "ltree")]
+    conn = _ConexaoFalsa(colunas, [("caminho",)], [], [])
+    descrito = _descrever_tabela_postgres({}, "public", "tipos", conn)
+
+    coluna = descrito["columns"][0]
+    assert coluna["primary_key"] is True
+    assert coluna["nullable"] is True
+
+
 def _descrever_clickhouse(linhas, tabela=None):
     from conduto.database.introspect import _descrever_tabela_clickhouse
 
@@ -362,6 +454,12 @@ def test_duckdb_repassa_os_tipos_compostos():
 @pytest.mark.parametrize(
     "origem, cruto, udt, esperado",
     [
+        # PostgreSQL: o nome sobrevive da introspecao ao DDL
+        ("postgresql", "USER-DEFINED", "ltree", "ltree"),
+        ("postgresql", "USER-DEFINED", "citext", "citext"),
+        ("postgresql", "USER-DEFINED", "hstore", "hstore"),
+        # ...e o que nao existe la fora vira texto portatil
+        ("postgresql", "USER-DEFINED", "status_t", "text"),
         # ClickHouse
         ("clickhouse", "Array(String)", None, "array"),
         ("clickhouse", "Map(String, UInt8)", None, "map"),
@@ -373,6 +471,9 @@ def test_duckdb_repassa_os_tipos_compostos():
     ],
 )
 def test_cenario_catalogo_ate_o_yaml(origem, cruto, udt, esperado):
+    if origem == "postgresql":
+        from conduto.database.introspect import _resolver_tipo_postgres
+        cruto = _resolver_tipo_postgres(cruto, udt)
     assert inferir_tipo(cruto) == esperado
 
 
