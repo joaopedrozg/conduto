@@ -348,21 +348,53 @@ def _colunas_origem(conn, tipo: str, origem: str) -> List[str]:
         return [descricao[0] for descricao in cur.description]
 
 
-def _cols_select_sqlserver(conn, origem: str, colunas: List[str]) -> List[str]:
-    """Gera as expressoes SELECT com CAST para tipos que o pyodbc nao suporta
-    (tipos com codigo ODBC negativo, como hierarchyid, geometry e geography)."""
+# Tipos que o pyodbc nao consegue buscar: o fetch devolve HY106 (type=-151) e
+# mata a carga. A lista e do driver, nao do schema: testada no pyodbc 5.3, onde
+# hierarchyid e geography falham, enquanto xml e os tipos definidos pelo usuario
+# (UDT) do SQL Server vao direto. O que vem do banco e a coluna que carrega cada
+# tipo, lido do catalogo logo abaixo.
+_TIPOS_ODBC_NAO_SUPORTADOS = (
+    "hierarchyid",
+    "geometry",
+    "geography",
+    "sql_variant",
+)
+
+
+def _tipos_colunas_sqlserver(conn, objeto: str) -> Dict[str, str]:
+    """Le do catalogo do SQL Server o tipo real de cada coluna da tabela.
+
+    Nao da para usar ``cur.description``: no pyodbc 5.x ele devolve o tipo do
+    Python (``<class 'bytearray'>``), nao o codigo ODBC, entao a checagem antiga
+    ``tipo < 0`` nunca disparava e a carga morria no fetch com HY106. Tabela
+    inexistente devolve dict vazio: nao ha o que castar e o SELECT que segue ja
+    reclama com o erro certo.
+    """
     with conn.cursor() as cur:
-        cur.execute(f"SELECT TOP (0) * FROM {origem}")
-        descricoes = {d[0]: d[1] for d in cur.description}
-    resultado = []
+        cur.execute(
+            """
+            SELECT c.name, ty.name
+            FROM sys.columns c
+            JOIN sys.types ty ON c.user_type_id = ty.user_type_id
+            WHERE c.object_id = OBJECT_ID(?)
+            ORDER BY c.column_id
+            """,
+            (objeto,),
+        )
+        return {nome: tipo for nome, tipo in cur.fetchall()}
+
+
+def _cols_select_sqlserver(conn, origem: str, colunas: List[str]) -> List[str]:
+    """Gera as expressoes SELECT, com CAST nos tipos que o pyodbc nao busca."""
+    tipos = _tipos_colunas_sqlserver(conn, origem)
+    expressoes = []
     for c in colunas:
-        tipo = descricoes.get(c, 0)
         col = _aspas("sqlserver", c)
-        if isinstance(tipo, int) and tipo < 0:
-            resultado.append(f"CAST({col} AS NVARCHAR(MAX)) AS {col}")
+        if tipos.get(c) in _TIPOS_ODBC_NAO_SUPORTADOS:
+            expressoes.append(f"CAST({col} AS NVARCHAR(MAX)) AS {col}")
         else:
-            resultado.append(col)
-    return resultado
+            expressoes.append(col)
+    return expressoes
 
 
 def _executar(conn, sql: str, params: Optional[Sequence] = None) -> None:
@@ -567,16 +599,19 @@ def _copiar_postgres_upsert(conn, destino: str, tabela: Dict[str, Any], fila, co
     a mesma PK (execucao repetida ou watermark impreciso), o fallback aqui faz a
     insercao em lote com ``INSERT ... ON CONFLICT (...) DO UPDATE``.
     """
+    # A checagem vem antes de ler a fila: consumir a lista de colunas e so
+    # depois delegar faria o _copiar_postgres tratar a lista de colunas como
+    # se fosse lote, engolindo o primeiro bloco de dados (total = 0).
+    pks = [c["name"] for c in tabela.get("columns", []) if c.get("primary_key")]
+    if not pks:
+        return _copiar_postgres(conn, destino, fila, context)
+
     primeiro = fila.get()
     if isinstance(primeiro, Exception):
         raise primeiro
     colunas = list(primeiro)
     if not colunas:
         return 0
-
-    pks = [c["name"] for c in tabela.get("columns", []) if c.get("primary_key")]
-    if not pks:
-        return _copiar_postgres(conn, destino, fila, context)
 
     cols_sql = ", ".join(_aspas("postgresql", c) for c in colunas)
     conflict_sql = ", ".join(_aspas("postgresql", c) for c in pks)
