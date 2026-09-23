@@ -3,7 +3,6 @@
 from pathlib import Path
 from typing import Any, Dict, List
 
-import questionary
 import typer
 
 from conduto.database.adapters import Adapter
@@ -13,24 +12,34 @@ from conduto.database.introspect import (
     filtrar_tabelas_por_schema,
     listar_tabelas,
 )
+from conduto.i18n import t
+from conduto.tui import Choice, Status
 from conduto.ui import aviso, carregando, console, erro, gerado, info, multi_selecionar, progresso
 
-custom_style = questionary.Style([
-    # Fundo preto e apenas a bolinha das opções marcadas em verde (noreverse)
-    ('', 'bg:black'),
-    ('pointer', 'fg:cyan bold noreverse bg:black'),
-    ('highlighted', 'fg:white noreverse bg:black'),
-    ('selected', 'fg:green bold noreverse bg:black'),
-    ('text', 'fg:white noreverse bg:black'),
-    ('instruction', 'fg:white dim noreverse bg:black'),
-    ('answer', 'fg:yellow bold noreverse bg:black'),
-])
-
-# Mesma instrucao nos dois checkboxes: setas navegam, espaco marca, digito filtra.
+# Mesma instrucao nas duas telas: setas navegam, espaco marca uma a uma,
+# "a" marca todas as visiveis, "l" limpa, digito filtra, enter confirma.
 INSTRUCAO_BUSCA = (
-    "(setas para navegar, espaco para marcar/desmarcar, "
-    "digite para filtrar, backspace limpa a busca, enter para confirmar)"
+    "(setas navegam, espaco marca/desmarca, a marca todas as visiveis, "
+    "l limpa, digite para filtrar, esc volta para a lista, enter confirma)"
 )
+
+
+def _escolha_de_tabela(tabela: Dict[str, str], schemas_dir: Path) -> Choice:
+    """Opção da tela de tabelas: título ``schema.tabela`` + estado do YAML.
+
+    Tabela que já tem ``schemas/<tabela>.yml`` no projeto ganha status de
+    atenção (âmbar, "já existe"): regenerar sobrescreve o arquivo que você
+    pode ter editado. As demais ficam neutras.
+    """
+    nome = f"{tabela['schema']}.{tabela['table']}" if tabela["schema"] else tabela["table"]
+    if (schemas_dir / f"{tabela['table']}.yml").exists():
+        return Choice(
+            title=nome,
+            value={"schema": tabela["schema"], "table": tabela["table"]},
+            status=Status.AVISO,
+            detalhe=t("já existe"),
+        )
+    return Choice(title=nome, value={"schema": tabela["schema"], "table": tabela["table"]})
 
 
 def _escolher_schemas(tabelas: List[Dict[str, str]]) -> List[Dict[str, str]]:
@@ -44,14 +53,21 @@ def _escolher_schemas(tabelas: List[Dict[str, str]]) -> List[Dict[str, str]]:
     if len(disponiveis) <= 1:
         return tabelas
 
-    escolhas = [questionary.Choice(title=nome, value=nome) for nome in disponiveis]
+    # Cada schema vem com a contagem de tabelas dele (azul = informacao).
+    escolhas = [
+        Choice(
+            title=nome,
+            value=nome,
+            status=Status.INFO,
+            detalhe=t("{qtd} tabela(s)", qtd=sum(1 for tb in tabelas if tb["schema"] == nome)),
+        )
+        for nome in disponiveis
+    ]
     escolhidos = multi_selecionar(
         "Selecione os schemas da origem:",
         escolhas,
         instrucao=INSTRUCAO_BUSCA,
-        style=custom_style,
         use_search_filter=True,
-        use_jk_keys=False,
     )
     if escolhidos is None:
         console.print(aviso("Operação cancelada."))
@@ -89,21 +105,16 @@ def gerar_schemas_automaticos(
         return False
 
     console.print(info("{qtd} tabela(s) encontrada(s).", qtd=len(tabelas)))
+    schemas_dir = Path(project_dir) / "schemas"
     escolhas = [
-        questionary.Choice(
-            # Titulo em texto puro: necessario para o filtro de busca funcionar
-            title=f"{t['schema']}.{t['table']}" if t["schema"] else t["table"],
-            value={"schema": t["schema"], "table": t["table"]},
-        )
-        for t in tabelas
+        _escolha_de_tabela(tabela, schemas_dir)
+        for tabela in tabelas
     ]
     selecionadas = multi_selecionar(
         "Selecione as tabelas para gerar os schemas:",
         escolhas,
         instrucao=INSTRUCAO_BUSCA,
-        style=custom_style,
         use_search_filter=True,
-        use_jk_keys=False,
     )
     if selecionadas is None:
         console.print(aviso("Operação cancelada."))

@@ -158,7 +158,6 @@ CATALOGO_EN: dict[str, str] = {
     "Selecione os schemas da origem:": "Select the source schemas:",
     "Nenhum schema selecionado.": "No schema selected.",
     "{qtd_schemas} schema(s), {qtd} tabela(s).": "{qtd_schemas} schema(s), {qtd} table(s).",
-    "(setas para navegar, espaco para marcar/desmarcar, digite para filtrar, backspace limpa a busca, enter para confirmar)": "(arrow keys to navigate, space to toggle, type to filter, backspace clears the search, enter to confirm)",
     "Nenhum template Dagster em: {diretorio}": "No Dagster template at: {diretorio}",
     "Dependências: ": "Dependencies: ",
     "Testando conexão com {nome}...": "Testing connection to {nome}...",
@@ -207,6 +206,35 @@ CATALOGO_EN: dict[str, str] = {
         "The Python in use is not a venv and is system-managed (PEP 668), so the install is blocked. Options: run conduto with uvx/pipx (uses an isolated venv), create a venv with `uv venv`, or authorize it with `pip install --break-system-packages {requisicoes}`.",
     "Ok — sem instalar no sistema. Para configurar depois, use `uvx \"conduto[{extra}]\"`.":
         "OK — nothing installed system-wide. To set it up later, use `uvx \"conduto[{extra}]\"`.",
+
+    # --- Telas Textual (conduto.tui) ---
+    "(setas navegam, espaco marca/desmarca, a marca todas as visiveis, l limpa, digite para filtrar, esc volta para a lista, enter confirma)":
+        "(arrows move, space toggles, a marks all visible, l clears, type to filter, esc back to the list, enter confirms)",
+    "{qtd} tabelas": "{qtd} tables",
+    "{qtd} tabela(s)": "{qtd} table(s)",
+    "já existe": "already exists",
+    "Cancelar": "Cancel",
+    "Confirmar": "Confirm",
+    "Alternar marcação": "Toggle",
+    "Alternar": "Toggle",
+    "Selecionar todas": "Select all",
+    "Limpar": "Clear",
+    "Filtrar": "Filter",
+    "espaço": "space",
+    "Opção": "Option",
+    "Digite para filtrar...": "Type to filter...",
+    "Digite...": "Type...",
+    "Marca só o que está visível com o filtro atual.": "Marks only what is visible with the current filter.",
+    "nenhum resultado": "no results",
+    "{qtd} marcadas": "{qtd} marked",
+    "{qtd} visíveis": "{qtd} visible",
+    "{qtd} com atenção": "{qtd} need attention",
+    "Sim": "Yes",
+    "Não": "No",
+    "Número": "Number",
+    "Números separados por vírgula (ou todos)": "Numbers separated by comma (or all)",
+    "Escolha um número da lista.": "Choose a number from the list.",
+    "Entrada inválida.": "Invalid input.",
 }
 
 # ok

@@ -1,8 +1,16 @@
 """Ajustes de renderização e componentes visuais modernos do Conduto.
 
-Centraliza as cores de aviso/sucesso/erro/info, os widgets de carregamento
-(spinner e barra de progresso) e os helpers de mensagens e prompts com
-tradução via :mod:`conduto.i18n`.
+Centraliza as cores de aviso/sucesso/erro/info (paleta de status vinda de
+:mod:`conduto.tui.tema`), os widgets de carregamento (spinner e barra de
+progresso) e os helpers de mensagens com tradução via :mod:`conduto.i18n`.
+
+Os prompts (seleção, confirmação e texto) agora são telas Textual — ver
+:mod:`conduto.tui` — e são reexportados aqui de forma que os chamadores de
+sempre (``cli``, ``schemas_auto``) continuem iguais.
+
+Paleta: a mesma de :mod:`conduto.tui.tema`, em que cada cor é um status
+(verde = sucesso/marcado, âmbar = atenção, vermelho = erro, azul = informação,
+cinza = neutro) — cores discretas que informam, não decoram.
 """
 
 from __future__ import annotations
@@ -10,7 +18,6 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Any, Iterable, List, Optional, Tuple
 
-import questionary
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import (
@@ -26,55 +33,25 @@ from rich.table import Table
 from rich.text import Text
 
 from conduto.i18n import nome_idioma, t
+from conduto.tui.modelo import Choice  # reexport (mesma interface de sempre)
+from conduto.tui.prompts import (
+    confirmar,
+    multi_selecionar,
+    pedir,
+    pedir_senha,
+    selecionar,
+)
+from conduto.tui.tema import CORES, ESTILOS_COLUNA
 
 console = Console()
 
 # ---------------------------------------------------------------------------
 # Tema central: referências de cor para avisos, sucesso, erros etc.
+#
+# Vem de `conduto.tui.tema` — a mesma paleta discreta em que cada cor é um
+# status (verde=OK, âmbar=atenção, vermelho=erro, azul=info, cinza=neutro) e
+# que também alimenta o CSS das telas Textual: CLI e TUI falam a mesma cor.
 # ---------------------------------------------------------------------------
-
-CORES = {
-    "erro": "bold red",
-    "aviso": "bold yellow",
-    "sucesso": "bold green",
-    "info": "bold cyan",
-    "neutro": "dim white",
-    "discreto": "dim",
-    "destaque": "bold white on blue",
-    "titulo": "bold white",
-    "texto": "white",
-    "detalhe": "yellow",
-    "borda": "green",
-    "linha": "dim blue",
-    "progresso": "cyan",
-    "coluna_titulo": "bold white",
-    "coluna_valor": "white",
-    "coluna_sucesso": "green",
-    "coluna_info": "cyan",
-    "coluna_detalhe": "yellow",
-}
-
-# Estilos semânticos usados pelas colunas da :func:`tabela`.
-ESTILOS_COLUNA = {
-    "titulo": CORES["coluna_titulo"],
-    "texto": CORES["coluna_valor"],
-    "sucesso": CORES["coluna_sucesso"],
-    "info": CORES["coluna_info"],
-    "detalhe": CORES["coluna_detalhe"],
-}
-
-# Cores dos prompts (formato do prompt_toolkit, independente do tema rich).
-COR_PROMPT = {
-    "pointer": "cyan",
-    "highlighted": "green",
-    "answer": "yellow",
-}
-
-ESTILO_PROMPT = questionary.Style([
-    ("pointer", f"fg:{COR_PROMPT['pointer']} bold"),
-    ("highlighted", f"fg:{COR_PROMPT['highlighted']} bold"),
-    ("answer", f"fg:{COR_PROMPT['answer']} bold"),
-])
 
 
 # ---------------------------------------------------------------------------
@@ -204,81 +181,7 @@ def progresso(total: int, descricao: str, **kwargs: object):
 
 
 # ---------------------------------------------------------------------------
-# Prompts (questionary) com o tema e a tradução centralizados
+# Prompts: telas Textual (ver `conduto.tui`), reexportadas com as assinaturas
+# de sempre — `selecionar`, `confirmar`, `pedir`, `pedir_senha` e
+# `multi_selecionar` (importadas no topo deste módulo).
 # ---------------------------------------------------------------------------
-
-
-def _separar_formatacao(mensagem: str, kwargs: dict, *outras_mensagens: str) -> Tuple[dict, dict]:
-    """Separa kwargs de formatação (usados em ``t()``) dos kwargs do questionary."""
-    textos = (mensagem,) + outras_mensagens
-    formatacao = {}
-    questionario = {}
-    for chave, valor in kwargs.items():
-        if any("{" + chave + "}" in texto for texto in textos):
-            formatacao[chave] = valor
-        else:
-            questionario[chave] = valor
-    return formatacao, questionario
-
-
-def selecionar(pergunta: str, escolhas: Iterable[str], **kwargs: Any) -> Optional[str]:
-    formatacao, questionario = _separar_formatacao(pergunta, kwargs)
-    return questionary.select(
-        t(pergunta, **formatacao),
-        choices=list(escolhas),
-        style=ESTILO_PROMPT,
-        qmark="",
-        **questionario,
-    ).ask()
-
-
-def confirmar(pergunta: str, padrao: bool = True, **kwargs: Any) -> Optional[bool]:
-    formatacao, questionario = _separar_formatacao(pergunta, kwargs)
-    return questionary.confirm(
-        t(pergunta, **formatacao),
-        default=padrao,
-        style=ESTILO_PROMPT,
-        qmark="",
-        **questionario,
-    ).ask()
-
-
-def pedir(pergunta: str, padrao: str = "", **kwargs: Any) -> Optional[str]:
-    formatacao, questionario = _separar_formatacao(pergunta, kwargs)
-    return questionary.text(
-        t(pergunta, **formatacao),
-        default=padrao,
-        style=ESTILO_PROMPT,
-        qmark="",
-        **questionario,
-    ).ask()
-
-
-def pedir_senha(pergunta: str, padrao: str = "", **kwargs: Any) -> Optional[str]:
-    formatacao, questionario = _separar_formatacao(pergunta, kwargs)
-    return questionary.password(
-        t(pergunta, **formatacao),
-        default=padrao,
-        style=ESTILO_PROMPT,
-        qmark="",
-        **questionario,
-    ).ask()
-
-
-def multi_selecionar(
-    pergunta: str,
-    escolhas: Iterable[Any],
-    instrucao: str = "",
-    style: Optional[questionary.Style] = None,
-    **kwargs: Any,
-) -> Optional[List[Any]]:
-    """Checkbox do questionary (multi-seleção) com o tema e a tradução centralizados."""
-    formatacao, questionario = _separar_formatacao(pergunta, kwargs, instrucao)
-    return questionary.checkbox(
-        t(pergunta, **formatacao),
-        choices=list(escolhas),
-        style=style or ESTILO_PROMPT,
-        qmark="",
-        instruction=t(instrucao, **formatacao) if instrucao else "",
-        **questionario,
-    ).ask()

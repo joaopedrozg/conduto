@@ -29,12 +29,13 @@ CLI para criar projetos de migração/ELT de dados: gera o `.env` com as credenc
 - Credenciais visíveis no prompt durante o preenchimento — só vão para o `.env`
 - Instalação da lib oficial do SGBD escolhido (`psycopg[binary]`, `pymysql`, `pyodbc`) no projeto gerado — na CLI, os drivers são extras por SGBD (`conduto[all]` traz todos)
 - Download/instalação automática do ODBC Driver for SQL Server (Windows, Linux e macOS)
-- Feedback visual com `rich` e `questionary`: cores semânticas (sucesso, aviso, erro, info), tabelas de resumo e widgets de carregamento (spinner e barra de progresso) nas operações demoradas
+- Feedback visual com `rich` e `textual`: paleta discreta em que **cada cor é um status** (verde = sucesso/marcado, âmbar = atenção, vermelho = erro, azul = informação, cinza = neutro), tabelas de resumo e widgets de carregamento (spinner e barra de progresso) nas operações demoradas
+- Telas de seleção modernas (Textual) com filtro de busca, marcação item a item, **"selecionar todas"** (as visíveis) e limpar — nos schemas de origem e nas tabelas
 - Detecção automática do idioma da máquina (português ou inglês) com override por comando (`--lang`) ou variável de ambiente (`CONDUTO_LANG`)
 
 ## Instalação
 
-O pacote base instala só a CLI (Typer, rich, questionary, Jinja2 e PyYAML).
+O pacote base instala só a CLI (Typer, rich, textual, Jinja2 e PyYAML).
 Os drivers de banco vêm como **extras por SGBD** — instale só o que você usa:
 
 ```bash
@@ -145,7 +146,7 @@ O comando pergunta interativamente:
 4. Lista de bancos do servidor de origem — escolha um
 5. SGBD de destino
 6. Credenciais de destino, com o mesmo fluxo — e com a escolha do **schema de destino** (mais a opção de criar um banco e/ou schema novo)
-7. Como configurar os schemas: **gerar automaticamente** — depois você **flega os schemas de origem** e as tabelas que entram, e é essa marcação que vale — ou **configurar manualmente** — pergunta o schema de origem (é a única vez que ele aparece) e gera os exemplos
+7. Como configurar os schemas: **gerar automaticamente** — depois você **flega os schemas de origem** e as tabelas que entram (item a item com `espaço`, ou todas as visíveis com `a`/botão **Selecionar todas**), e é essa marcação que vale — ou **configurar manualmente** — pergunta o schema de origem (é a única vez que ele aparece) e gera os exemplos
 8. Gerenciamento de schedules — pergunta se você quer gerar automaticamente o schedule de cada tabela (padrão: hora em hora) e o código Dagster correspondente
 9. Servidor Dagster — pergunta se você quer subir o servidor agora (`uv run dagster dev`) e gera os scripts `run_dagster.ps1`/`run_dagster.sh`
 
@@ -167,7 +168,7 @@ conduto docs --no-open          # sem abrir o navegador automaticamente
 
 Depois de testar as duas conexões, o conduto pergunta como você quer configurar os schemas das tabelas:
 
-- **Gerar automaticamente**: o conduto lista os schemas do banco de origem e, se houver mais de um, deixa marcar **qualquer quantidade com espaço**; só as tabelas dos schemas marcados entram na lista seguinte, onde você busca por nome e marca/desmarca quais incluir. Depois lê as colunas (tipos, PK, FK, unique, default e nullable) e gera os `schemas/*.yml` e o `main.yml`. Com um único schema (MySQL, ClickHouse, Delta Lake) a primeira pergunta não aparece. **É essa marcação que decide o schema de origem de cada tabela** — nenhum outro prompt de schema de origem aparece no fluxo.
+- **Gerar automaticamente**: o conduto lista os schemas do banco de origem e, se houver mais de um, abre uma tela de seleção com filtro: você flega **qualquer quantidade** — uma a uma com `espaço` (ou o botão **Alternar**), ou **todas as visíveis** de uma vez com `a` (**Selecionar todas**; o filtro manda, então dá para marcar só o que a busca mostrou) e `l` limpa a marcação. Cada schema mostra quantas tabelas tem (azul = informação). Só as tabelas dos schemas marcados entram na lista seguinte, que usa a mesma tela: você busca por nome e marca/desmarca quais incluir — tabelas que **já têm** `schemas/<tabela>.yml` no projeto aparecem em âmbar com "já existe" (regenerar sobrescreve). Depois lê as colunas (tipos, PK, FK, unique, default e nullable) e gera os `schemas/*.yml` e o `main.yml`. Com um único schema (MySQL, ClickHouse, Delta Lake) a primeira pergunta não aparece. **É essa marcação que decide o schema de origem de cada tabela** — nenhum outro prompt de schema de origem aparece no fluxo.
 - **Configurar manualmente**: pergunta qual é o schema de origem (é o único prompt dele, já que aqui não existe flegagem) e gera os três schemas de exemplo (clientes, pedidos e produtos) para você editar.
 
 ### DDL para o banco de destino
