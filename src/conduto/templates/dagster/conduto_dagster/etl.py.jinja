@@ -348,21 +348,53 @@ def _colunas_origem(conn, tipo: str, origem: str) -> List[str]:
         return [descricao[0] for descricao in cur.description]
 
 
-def _cols_select_sqlserver(conn, origem: str, colunas: List[str]) -> List[str]:
-    """Gera as expressoes SELECT com CAST para tipos que o pyodbc nao suporta
-    (tipos com codigo ODBC negativo, como hierarchyid, geometry e geography)."""
+# Tipos que o pyodbc nao consegue buscar: o fetch devolve HY106 (type=-151) e
+# mata a carga. A lista e do driver, nao do schema: testada no pyodbc 5.3, onde
+# hierarchyid e geography falham, enquanto xml e os tipos definidos pelo usuario
+# (UDT) do SQL Server vao direto. O que vem do banco e a coluna que carrega cada
+# tipo, lido do catalogo logo abaixo.
+_TIPOS_ODBC_NAO_SUPORTADOS = (
+    "hierarchyid",
+    "geometry",
+    "geography",
+    "sql_variant",
+)
+
+
+def _tipos_colunas_sqlserver(conn, objeto: str) -> Dict[str, str]:
+    """Le do catalogo do SQL Server o tipo real de cada coluna da tabela.
+
+    Nao da para usar ``cur.description``: no pyodbc 5.x ele devolve o tipo do
+    Python (``<class 'bytearray'>``), nao o codigo ODBC, entao a checagem antiga
+    ``tipo < 0`` nunca disparava e a carga morria no fetch com HY106. Tabela
+    inexistente devolve dict vazio: nao ha o que castar e o SELECT que segue ja
+    reclama com o erro certo.
+    """
     with conn.cursor() as cur:
-        cur.execute(f"SELECT TOP (0) * FROM {origem}")
-        descricoes = {d[0]: d[1] for d in cur.description}
-    resultado = []
+        cur.execute(
+            """
+            SELECT c.name, ty.name
+            FROM sys.columns c
+            JOIN sys.types ty ON c.user_type_id = ty.user_type_id
+            WHERE c.object_id = OBJECT_ID(?)
+            ORDER BY c.column_id
+            """,
+            (objeto,),
+        )
+        return {nome: tipo for nome, tipo in cur.fetchall()}
+
+
+def _cols_select_sqlserver(conn, origem: str, colunas: List[str]) -> List[str]:
+    """Gera as expressoes SELECT, com CAST nos tipos que o pyodbc nao busca."""
+    tipos = _tipos_colunas_sqlserver(conn, origem)
+    expressoes = []
     for c in colunas:
-        tipo = descricoes.get(c, 0)
         col = _aspas("sqlserver", c)
-        if isinstance(tipo, int) and tipo < 0:
-            resultado.append(f"CAST({col} AS NVARCHAR(MAX)) AS {col}")
+        if tipos.get(c) in _TIPOS_ODBC_NAO_SUPORTADOS:
+            expressoes.append(f"CAST({col} AS NVARCHAR(MAX)) AS {col}")
         else:
-            resultado.append(col)
-    return resultado
+            expressoes.append(col)
+    return expressoes
 
 
 def _executar(conn, sql: str, params: Optional[Sequence] = None) -> None:
@@ -395,9 +427,19 @@ def _produtor(conn, sql: str, params: Optional[Sequence], fila, lote: int = _LOT
 
 
 def _produtor_delta(
-    conn, tabela_nome: str, fila, lote: int = _LOTE, colunas_permitidas: Optional[Set[str]] = None,
+    conn, tabela_nome: str, fila, lote: int = _LOTE,
+    colunas_permitidas: Optional[Set[str]] = None, filtro=None,
 ) -> None:
-    """Le as linhas de uma tabela Delta (origem) em lotes e coloca na fila."""
+    """Le as linhas de uma tabela Delta (origem) em lotes e coloca na fila.
+
+    Le pelo dataset em ``batch_size=lote`` em vez de ``to_pyarrow_table()``:
+    essa carregava a tabela inteira na memoria e derrubava cargas grandes. O
+    ``filtro`` e a condicao incremental do pyarrow (coluna > watermark), com
+    pushdown para os Parquet -- sem ele o SQL montado em carregar_tabela seria
+    ignorado aqui e a origem Delta recarregava tudo em modo incremental. O
+    scanner entrega lotes vazios junto com os cheios, e um lote vazio viraria
+    uma linha em branco no COPY do Postgres: por isso sao pulados.
+    """
     try:
         from deltalake import DeltaTable
         caminho = f"{conn.base}/{tabela_nome}"
@@ -409,7 +451,12 @@ def _produtor_delta(
         if colunas_permitidas is not None:
             colunas = [c for c in colunas if c in colunas_permitidas]
         fila.put(colunas)
-        for bloco in tabela_delta.to_pyarrow_table().to_batches(max_chunksize=lote):
+        scanner = tabela_delta.to_pyarrow_dataset().scanner(
+            columns=colunas, filter=filtro, batch_size=lote
+        )
+        for bloco in scanner.to_batches():
+            if not bloco.num_rows:
+                continue
             fila.put([[linha[c] for c in colunas] for linha in bloco.to_pylist()])
     except Exception as erro:
         fila.put(erro)
@@ -417,17 +464,33 @@ def _produtor_delta(
         fila.put(_FIM)
 
 
+def _filtro_delta(coluna: str, valor: Any):
+    """Condicao ``coluna > valor`` como Expression do pyarrow (carga incremental).
+
+    A origem Delta nao aceita SQL: sem esta expressao o ``WHERE`` de
+    ``carregar_tabela`` seria descartado e a carga incremental recarregava a
+    tabela inteira. A semantica e a do SQL -- linha com a coluna nula nao passa
+    no ``>``.
+    """
+    import pyarrow.compute as pc
+    return pc.field(coluna) > pc.scalar(valor)
+
+
 def _ultimo_valor(conn, tipo: str, destino: str, coluna: str):
     """Lê o último watermark gravado no destino (None se a tabela não existir)."""
     if tipo == "deltalake":
         try:
             from deltalake import DeltaTable
+            import pyarrow.compute as pc
             tabela = DeltaTable(
                 f"{conn.base}/{destino}",
                 storage_options=conn.storage_options or None,
             )
-            valores = tabela.to_pyarrow_table().column(coluna).to_pylist()
-            return max((v for v in valores if v is not None), default=None)
+            # So a coluna do watermark, projetada no Parquet e agregada no
+            # Arrow: o antigo ``to_pylist()`` materializava a coluna inteira
+            # em lista Python so para achar o maximo, em memoria.
+            projetada = tabela.to_pyarrow_table(columns=[coluna])
+            return pc.max(projetada.column(coluna)).as_py()
         except Exception:
             return None
     sql = f"SELECT MAX({_aspas(tipo, coluna)}) FROM {destino}"
@@ -567,16 +630,19 @@ def _copiar_postgres_upsert(conn, destino: str, tabela: Dict[str, Any], fila, co
     a mesma PK (execucao repetida ou watermark impreciso), o fallback aqui faz a
     insercao em lote com ``INSERT ... ON CONFLICT (...) DO UPDATE``.
     """
+    # A checagem vem antes de ler a fila: consumir a lista de colunas e so
+    # depois delegar faria o _copiar_postgres tratar a lista de colunas como
+    # se fosse lote, engolindo o primeiro bloco de dados (total = 0).
+    pks = [c["name"] for c in tabela.get("columns", []) if c.get("primary_key")]
+    if not pks:
+        return _copiar_postgres(conn, destino, fila, context)
+
     primeiro = fila.get()
     if isinstance(primeiro, Exception):
         raise primeiro
     colunas = list(primeiro)
     if not colunas:
         return 0
-
-    pks = [c["name"] for c in tabela.get("columns", []) if c.get("primary_key")]
-    if not pks:
-        return _copiar_postgres(conn, destino, fila, context)
 
     cols_sql = ", ".join(_aspas("postgresql", c) for c in colunas)
     conflict_sql = ", ".join(_aspas("postgresql", c) for c in pks)
@@ -883,6 +949,7 @@ def carregar_tabela(tabela: Dict[str, Any], context=None) -> int:
             partes_select = [_aspas(tipo_origem, c) for c in colunas]
         cols_select = ", ".join(partes_select)
 
+        filtro_delta = None
         if forcar_full or modo == "full" or not coluna_inc:
             sql = f"SELECT {cols_select} FROM {origem}"
             params = None
@@ -899,6 +966,11 @@ def carregar_tabela(tabela: Dict[str, Any], context=None) -> int:
                     f"ORDER BY {_aspas(tipo_origem, coluna_inc)}"
                 )
                 params = [watermark]
+                if tipo_origem == "deltalake":
+                    # A origem Delta nao abre cursor: o WHERE acima nao vale
+                    # nada la, entao a mesma condicao vira expressao do pyarrow
+                    # e e repassada ao produtor.
+                    filtro_delta = _filtro_delta(coluna_inc, watermark)
 
         inicio = time.monotonic()
         if tipo_origem == "postgresql" and tipo_destino == "postgresql":
@@ -941,7 +1013,9 @@ def carregar_tabela(tabela: Dict[str, Any], context=None) -> int:
             fila = queue.Queue(maxsize=8)
             if tipo_origem == "deltalake":
                 alvo_produtor = _produtor_delta
-                args_produtor = (conn_origem, nome, fila, lote, permitidas)
+                args_produtor = (
+                    conn_origem, nome, fila, lote, permitidas, filtro_delta
+                )
             else:
                 alvo_produtor = _produtor
                 args_produtor = (conn_origem, sql, params, fila, lote)

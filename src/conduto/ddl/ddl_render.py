@@ -351,8 +351,18 @@ _TIPOS_CUSTOMIZADOS: Dict[str, Dict[str, str]] = {
         deltalake="integer",
     ),
     "set": _custom(postgresql="text"),
-    # Arrays do PostgreSQL: so existem la dentro
-    "array": _custom(postgresql="text[]"),
+    # Familias de colecao/composicao descobertas na introspecao: Array/Map/
+    # Tuple do ClickHouse, STRUCT/MAP/UNION/ENUM do DuckDB, struct<> do Arrow.
+    # O valor nao atravessa o EL como estrutura (_serializar e _valor_copy
+    # mandam JSON/texto), entao todo destino recebe texto portatil. Inclusive o
+    # PostgreSQL: a ETL grava '["a","b"]' e o PG rejeita literal de array em
+    # formato JSON ('malformed array literal'; so aceita {a,b}) -- por isso
+    # aqui e text e nao text[].
+    "array": _custom(),
+    "map": _custom(),
+    "tuple": _custom(),
+    "struct": _custom(),
+    "union": _custom(),
 }
 
 
@@ -368,6 +378,15 @@ def _resolver_base(base: str, sgbd: str) -> Optional[str]:
         # Nome udt de array do PostgreSQL: '_int4', '_text', ...
         return base if sgbd == "postgresql" else _TEXTO_PORTATIL[sgbd]
     return None
+
+
+# Familias de colecao/composicao: o que vem entre parenteses nao e parametro
+# do tipo, e o ELEMENTO ('Array(String)', 'ENUM(a,b)', 'STRUCT(a INT)'). Colar
+# o elemento no destino produz DDL invalido -- 'text[](string)', 'text(a,b)' --
+# entao ele e descartado e vale so a familia.
+_TIPOS_SEM_PARAMETROS = {
+    "array", "list", "map", "tuple", "struct", "union", "nested", "enum", "set",
+}
 
 
 def mapear_tipo(
@@ -394,6 +413,8 @@ def mapear_tipo(
         if novo is None:
             _aviso_tipo_sem_regra(texto, sgbd)
             return texto
+        if base in _TIPOS_SEM_PARAMETROS:
+            return novo
         if "(" in novo:
             return novo
         if sgbd == "clickhouse" and novo not in ("FixedString", "Decimal"):

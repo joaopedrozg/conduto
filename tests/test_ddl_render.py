@@ -185,7 +185,10 @@ def test_tipo_customizado_tem_regra_para_todos_os_destinos(tipo):
         # Arrays do PostgreSQL so existem la dentro
         ("_int4", "postgresql", "_int4"),
         ("_int4", "mysql", "text"),
-        ("array", "postgresql", "text[]"),
+        # ...mas como texto, nao como text[]: a ETL serializa lista em JSON e
+        # o PostgreSQL rejeita '["a","b"]' como literal de array (so aceita
+        # {a,b}), entao a carga PG falharia no meio do caminho.
+        ("array", "postgresql", "text"),
         ("array", "sqlserver", "nvarchar(max)"),
     ],
 )
