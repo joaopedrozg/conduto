@@ -41,9 +41,50 @@ from conduto.tui.prompts import (
     pedir_senha,
     selecionar,
 )
+from conduto.tui.shell import (
+    ETAPAS_DDL,
+    ETAPAS_INIT,
+    etapa,
+    rodar_no_shell,
+    sessao_ativa,
+)
 from conduto.tui.tema import CORES, ESTILOS_COLUNA
 
-console = Console()
+
+class _ConsoleDoShell:
+    """``console`` do Conduto: com o shell aberto, a saída vai pro registro.
+
+    Sem sessão é o Console rich de sempre (testes, pipes e o CLI avulso não
+    percebem diferença — inclusive ``capture()``); com sessão, cada ``print``
+    é guardado e espelhado no ``RichLog`` do shell — e reproduzido no
+    terminal real quando ele fecha, para nada se perder.
+    """
+
+    def __init__(self) -> None:
+        self._real = Console()
+
+    def print(self, *args: Any, **kwargs: Any) -> None:
+        sessao = sessao_ativa()
+        if sessao is None:
+            self._real.print(*args, **kwargs)
+        else:
+            sessao.registrar_console(args, kwargs)
+
+    # `with console:` (ex.: Live do rich) procura os dunders no TIPO, então o
+    # __getattr__ não alcança: repassamos explicitamente para o Console real.
+    def __enter__(self) -> "_ConsoleDoShell":
+        self._real.__enter__()
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self._real.__exit__(*args)
+
+    def __getattr__(self, nome: str) -> Any:
+        # capture/status/file/... seguem direto para o Console de sempre.
+        return getattr(self._real, nome)
+
+
+console = _ConsoleDoShell()
 
 # ---------------------------------------------------------------------------
 # Tema central: referências de cor para avisos, sucesso, erros etc.
@@ -150,6 +191,16 @@ def tabela(
 @contextmanager
 def carregando(descricao: str, **kwargs: object):
     """Widget de carregamento moderno (spinner + tempo decorrido)."""
+    sessao = sessao_ativa()
+    if sessao is not None:
+        # Dentro do shell o spinner sairia por cima da tela: o cabeçalho
+        # assume o papel de "em andamento" (o registro é a saída visível).
+        sessao.atividade(t(descricao, **kwargs))
+        try:
+            yield None, None
+        finally:
+            sessao.atividade("")
+        return
     with Progress(
         SpinnerColumn(spinner_name="dots12", style=CORES["progresso"]),
         TextColumn("[progress.description]{task.description}", style=CORES["texto"]),
@@ -166,6 +217,17 @@ def carregando(descricao: str, **kwargs: object):
 @contextmanager
 def progresso(total: int, descricao: str, **kwargs: object):
     """Barra de progresso determinada para tarefas com etapas conhecidas."""
+    sessao = sessao_ativa()
+    if sessao is not None:
+        # Sem barra desenhada: a contagem vira linha de atividade no
+        # cabeçalho; a barra devolvida é uma fingida (só ``advance`` serve).
+        texto = t(descricao, **kwargs)
+        sessao.atividade(f"{texto} 0/{total}")
+        try:
+            yield _BarraSemShell(sessao, texto, total), 0
+        finally:
+            sessao.atividade("")
+        return
     with Progress(
         TextColumn("[progress.description]{task.description}", style=CORES["texto"]),
         BarColumn(bar_width=28, style=CORES["progresso"], complete_style=CORES["sucesso"]),
@@ -180,8 +242,40 @@ def progresso(total: int, descricao: str, **kwargs: object):
             progresso_ui.stop_task(tarefa)
 
 
+class _BarraSemShell:
+    """Barra fingida dentro do shell: só a contagem importa.
+
+    Os chamadores fazem ``barra.advance(tarefa)`` — aqui a tarefa comum é
+    manter o cabeçalho do wizard informado (``texto 3/10``), sem desenhar
+    barra nenhuma por cima da tela.
+    """
+
+    def __init__(self, sessao: Any, descricao: str, total: int) -> None:
+        self._sessao = sessao
+        self._descricao = descricao
+        self._total = total
+        self._feitas = 0
+
+    def advance(self, tarefa: Any = None, incremento: int = 1) -> None:
+        self._feitas += incremento
+        self._sessao.atividade(
+            f"{self._descricao} {min(self._feitas, self._total)}/{self._total}"
+        )
+
+    def stop_task(self, tarefa: Any) -> None:
+        return None
+
+    def remove_task(self, tarefa: Any) -> None:
+        return None
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Prompts: telas Textual (ver `conduto.tui`), reexportadas com as assinaturas
 # de sempre — `selecionar`, `confirmar`, `pedir`, `pedir_senha` e
-# `multi_selecionar` (importadas no topo deste módulo).
+# `multi_selecionar` (importadas no topo deste módulo). O shell do wizard
+# (`etapa`, `sessao_ativa`, `rodar_no_shell`, `ETAPAS_*`) idem, de forma que
+# `cli`/`schemas_auto` seguem importando só daqui.
 # ---------------------------------------------------------------------------

@@ -235,6 +235,29 @@ CATALOGO_EN: dict[str, str] = {
     "Números separados por vírgula (ou todos)": "Numbers separated by comma (or all)",
     "Escolha um número da lista.": "Choose a number from the list.",
     "Entrada inválida.": "Invalid input.",
+    # --- Shell do wizard: revisão, atalhos globais e mensagens de etapa ---
+    "Revisão · somente leitura": "Review · read-only",
+    "Etapas": "Steps",
+    "Voltar": "Back",
+    "Cancelando...": "Cancelling...",
+    "passo {atual}/{total}": "step {atual}/{total}",
+    "Etapa aguardando as anteriores.": "Step waiting on the previous ones.",
+    "Etapa não executada neste fluxo.": "Step not run in this flow.",
+    "Etapa concluída sem perguntas.": "Step finished without questions.",
+    # Títulos dos passos do menu lateral (Passo.titulo, traduzidos no desenho)
+    "Origem: SGBD": "Source: DBMS",
+    "Origem: credenciais": "Source: credentials",
+    "Origem: banco e schema": "Source: database and schema",
+    "Destino: SGBD": "Target: DBMS",
+    "Destino: credenciais": "Target: credentials",
+    "Destino: banco e schema": "Target: database and schema",
+    "Modo dos schemas": "Schemas mode",
+    "Schemas de origem": "Source schemas",
+    "Tabelas": "Tables",
+    "Schedules": "Schedules",
+    "DDL no destino": "DDL to the target",
+    "Servidor Dagster": "Dagster server",
+    "Aplicação do DDL": "DDL application",
 }
 
 # ok
