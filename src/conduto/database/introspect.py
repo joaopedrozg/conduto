@@ -17,6 +17,11 @@ from conduto.database.adapters import (
     delta_storage_options,
 )
 from conduto.database.drivers import importar_driver
+# O vocabulario canonico do YAML -- que tipo cada destino sabe aceitar -- mora
+# no gerador de DDL, que e a fronteira. A introspecao so tem o direito de
+# devolver nomes desse vocabulario: qualquer outro passaria cru no CREATE
+# TABLE e quebraria a carga no destino.
+from conduto.ddl.ddl_render import _TIPOS_CUSTOMIZADOS, _TIPOS_POR_SGBD
 
 
 def filtrar_tabelas_por_schema(
@@ -105,6 +110,33 @@ def descrever_tabela(
     raise ValueError(f"Adapter desconhecido: {adapter.tipo}")
 
 
+def _vocabulario_canonico() -> set:
+    """Nomes de tipo que a introspecao tem o direito de devolver.
+
+    E a interseccao dos destinos: um tipo so e canonico se TODOS eles
+    souberem mapear, senao o CREATE TABLE falha em algum. 'user-defined' fica
+    de fora de proposito -- e o rotulo que o information_schema do PostgreSQL
+    devolve para o que nao sabe nomear, nao um tipo de dado.
+    """
+    intersecao = set.intersection(
+        *(set(regras) for regras in _TIPOS_POR_SGBD.values())
+    )
+    return (intersecao | set(_TIPOS_CUSTOMIZADOS)) - {"user-defined"}
+
+
+_VOCABULARIO_TIPOS = _vocabulario_canonico()
+
+
+def _base_sem_parametros(tipo: str) -> str:
+    """A base do tipo sem o que estiver entre parenteses.
+
+    'varchar(13)' -> 'varchar'; 'numeric(10, 2)' -> 'numeric';
+    'bit varying' -> 'bit varying' (sem parenteses, devolve inteiro).
+    """
+    correspondencia = re.match(r"^([a-z0-9_ ]+?)\s*\(", tipo)
+    return (correspondencia.group(1) if correspondencia else tipo).strip().lower()
+
+
 def inferir_tipo(data_type: Optional[str], comprimento: Optional[int] = None,
                  precisao: Optional[int] = None, escala: Optional[int] = None) -> str:
     """Converte o tipo nativo do SGBD para o formato usado nos schemas YAML."""
@@ -132,12 +164,18 @@ def inferir_tipo(data_type: Optional[str], comprimento: Optional[int] = None,
     if t == "smallmoney":
         return "numeric(10, 4)"
     if t in ("int", "integer", "int4", "int32", "serial", "serial4",
-             "mediumint", "uint16"):
+             "mediumint", "uint16",
+             "usmallint"):          # DuckDB: 0..65535 cabe em int32
         return "integer"
     if t in ("bigint", "int64", "bigserial", "serial8", "int128", "int256",
-             "uint32", "uint64", "uint128", "uint256", "hugeint", "uhugeint"):
+             "uint32", "uint64", "uint128", "uint256", "hugeint", "uhugeint",
+             "uinteger"):           # DuckDB: 0..4294967295 cabe em int64
+        # UBIGINT (uint64) ficou de fora de proposito: ultrapassa o teto de
+        # int64 e cairia na rede de seguranca, virando texto, em vez de
+        # estourar no destino.
         return "bigint"
-    if t in ("smallint", "int2", "int16", "uint8"):
+    if t in ("smallint", "int2", "int16", "uint8",
+             "utinyint"):           # DuckDB: 0..255 cabe em int16
         return "smallint"
     if t in ("tinyint", "int1", "int8"):
         return "tinyint"
@@ -176,6 +214,33 @@ def inferir_tipo(data_type: Optional[str], comprimento: Optional[int] = None,
         # escolher o equivalente no destino (ver _TIPOS_CUSTOMIZADOS).
         return t
 
+    # Colecao e composicao: o catalogo entrega o literal cheio de elementos
+    # (Array(String), STRUCT(a INT), struct<a: int>). O elemento nao
+    # atravessa o EL -- _serializar/_valor_copy mandam JSON/texto --, entao o
+    # YAML guarda so a familia e cada destino escolhe o equivalente.
+    if t.endswith("[]"):
+        t = "array"                       # DuckDB: INTEGER[]
+    elif t.startswith(("array(", "list(", "map(", "tuple(", "union(",
+                       "struct(", "nested(", "enum(")):
+        t = t.split("(", 1)[0]            # ClickHouse/DuckDB
+    elif t.startswith("struct<"):
+        t = "struct"                      # Arrow (Delta)
+    elif t.startswith("list<"):
+        t = "array"
+    elif t.startswith("map<"):
+        t = "map"
+    elif t.startswith("union<"):
+        t = "union"
+    elif t.startswith("dictionary<"):
+        # Arrow: so a codificacao mudou, importa o tipo do valor.
+        valores = re.search(r"values=([a-z0-9_]+)", t)
+        t = valores.group(1) if valores else "text"
+    elif t.startswith(("decimal128(", "decimal256(")):
+        # Arrow: so a largura do inteiro muda; a semantica e decimal comum.
+        t = "decimal" + t[t.index("("):]
+    elif t == "bit varying":
+        t = "varbit"                      # data_type real de coluna varbit
+
     # Tipos compostos: ClickHouse, DuckDB e Delta (Arrow)
     if t.startswith(("nullable(", "lowcardinality(")):
         interno = t.split("(", 1)[1].rsplit(")", 1)[0]
@@ -198,6 +263,12 @@ def inferir_tipo(data_type: Optional[str], comprimento: Optional[int] = None,
         return "timestamptz" if "tz=" in t else "timestamp"
     if t.startswith(("enum8", "enum16")):
         return "enum"
+    # Rede de seguranca: o catalogo do SGBD nao e a fonte da verdade do DDL --
+    # o vocabulario canonico do YAML sim. Um nome fora dele passaria cru e
+    # quebraria o CREATE TABLE no destino, entao vira texto portatil (o usuario
+    # ainda pode declarar o equivalente real no bloco 'types:' da coluna).
+    if _base_sem_parametros(t) not in _VOCABULARIO_TIPOS:
+        return "text"
     return t
 
 
