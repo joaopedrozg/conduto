@@ -145,6 +145,7 @@ Screen {{
 }}
 
 Input {{
+    width: 1fr;
     height: 1;
     padding: 0 2;
     background: $cor-fundo-alt;
@@ -167,35 +168,48 @@ Input > .input--cursor {{
     background: $cor-fundo;
     align: center middle;
 }}
-#acoes Button {{
-    height: 3;
-    margin-right: 1;
-}}
 #acoes Input {{
     width: 1fr;
+    padding: 0;
+    background: transparent;
+}}
+#acoes Input:focus {{
+    background: $cor-foco;
+}}
+#acoes Button {{
+    height: 1;
+    margin-left: 1;
 }}
 #espacador {{
     width: 1fr;
 }}
 
 Button {{
+    width: auto;
+    min-width: 1;
+    height: 1;
+    padding: 0 1;
     background: $cor-fundo-alt;
     color: $cor-texto;
-    border: tall $cor-borda;
+    border: none;
     text-style: none;
+}}
+Button:hover {{
+    background: $cor-foco;
+    color: $cor-titulo;
 }}
 Button:focus {{
     background: $cor-foco;
     color: $cor-titulo;
-    border: tall $status-info;
+    text-style: bold;
+}}
+Button.-active {{
+    background: $cor-primaria;
+    color: $cor-titulo;
 }}
 Button.-primary {{
     background: $cor-primaria;
     color: $cor-titulo;
-    border: tall $status-info;
-}}
-Button.-primary:focus {{
-    border: tall $cor-titulo;
 }}
 
 DataTable {{
