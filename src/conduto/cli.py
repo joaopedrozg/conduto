@@ -42,19 +42,24 @@ from conduto.schedules.schedules_auto import (
 )
 from conduto.ui import (
     CORES,
+    ETAPAS_DDL,
+    ETAPAS_INIT,
     aviso,
     banner,
     carregando,
     confirmar,
     console,
     erro,
+    etapa,
     info,
     neutro,
     painel,
     pedir,
     pedir_senha,
+    rodar_no_shell,
     selecionar,
     separador,
+    sessao_ativa,
     sucesso,
 )
 
@@ -193,6 +198,12 @@ def _subir_servidor_dagster(project_dir: Path):
 
     console.print(info("Subindo o servidor Dagster..."))
     console.print(neutro("Acesse http://localhost:3000 — pressione Ctrl+C para encerrar."))
+    sessao = sessao_ativa()
+    if sessao is not None:
+        # Fora do shell: o Popen, a saída do servidor e o próximo Ctrl+C são
+        # do terminal de verdade (o shell devolve o terminal e reproduz o log
+        # antes — sair() espera isso) — sem isso o dagster dev ficaria sem TTY.
+        sessao.sair()
     try:
         processo = subprocess.Popen(["uv", "run", "dagster", "dev"], cwd=project_dir)
         if not _aguardar_dagster_responder(processo):
@@ -286,6 +297,7 @@ def coletar_credenciais(
     permitir_criar: bool = False,
     mostrar_particularidades: bool = False,
     pedir_schema: bool = True,
+    prefixo: Optional[str] = None,
 ):
     """Pergunta SGBD, credenciais e banco do ``rotulo`` (origem ou destino).
 
@@ -293,10 +305,16 @@ def coletar_credenciais(
     que no modo automático são os schemas flegados na geração (a marcação é a
     oficial) e no manual o prompt é chamado depois, já com o modo decidido.
 
+    ``prefixo`` ("origem"/"destino") é o marcador das etapas no shell do wizard:
+    sem sessão aberta os marcadores são no-op, então os testes podem chamar esta
+    função sem o parâmetro, de sempre.
+
     Devolve ``(credenciais, adapter, conectou)`` — o chamador precisa saber se há
     conexão para decidir se ainda há algo a perguntar.
     """
     while True:
+        if prefixo:
+            etapa(f"{prefixo}_sgbd")
         console.print(separador())
         sgbd = selecionar("Selecione o SGBD de {rotulo}:", ADAPTERS.keys(), rotulo=rotulo)
         if sgbd is None:
@@ -316,6 +334,8 @@ def coletar_credenciais(
             # de pedir host/usuário/senha, que não resolveriam nada.
             _instalar_dependencias_sgbd(adapter)
 
+        if prefixo:
+            etapa(f"{prefixo}_credenciais")
         console.print(separador())
         console.print(aviso(
             "Credenciais do servidor de {rotulo} ({nome})",
@@ -399,6 +419,10 @@ def coletar_credenciais(
         if not conectado and not continuar_mesmo_assim:
             continue  # "Digitar novamente": recomeça do SGBD
 
+        # Banco/schema: cobre o conectado e o manual (DATABASE digitado) — os
+        # dois casos pertencem à mesma etapa no menu do shell.
+        if prefixo:
+            etapa(f"{prefixo}_banco")
         if conectado:
             banco = _escolher_banco(adapter, credenciais, rotulo, permitir_criar)
             credenciais["database"] = banco
@@ -513,6 +537,16 @@ def _schema_origem_manual(adapter, credenciais: dict, conectou: bool) -> str:
 def init(
     project_name: str = typer.Argument(None, help=t("Nome do projeto (opcional se já estiver em um projeto uv)")),
 ):
+    """Abre o shell do wizard com o passo a passo do ``init`` no menu lateral."""
+    return rodar_no_shell(ETAPAS_INIT, "init", _init_corpo, project_name)
+
+
+def _init_corpo(project_name: Optional[str]) -> None:
+    """Corpo do ``conduto init`` — roda dentro do shell (ou direto, sem TTY).
+
+    Os marcadores ``etapa()`` intercalados com os prompts são o que alimenta
+    o menu lateral do shell; sem sessão aberta eles são no-op.
+    """
     cwd = Path.cwd()
     em_projeto_uv = (cwd / "pyproject.toml").exists()
 
@@ -536,12 +570,13 @@ def init(
         ))
 
     origem, adapter_origem, origem_conectou = coletar_credenciais(
-        t("origem"), pedir_schema=False
+        t("origem"), prefixo="origem", pedir_schema=False
     )
     destino, adapter_destino, _ = coletar_credenciais(
-        t("destino"), permitir_criar=True, mostrar_particularidades=True
+        t("destino"), prefixo="destino", permitir_criar=True, mostrar_particularidades=True
     )
 
+    etapa("modo_schemas")
     console.print(separador())
     opcao_auto = t("Gerar automaticamente a partir do banco de origem")
     opcao_manual = t("Configurar manualmente (gerar exemplos)")
@@ -552,6 +587,7 @@ def init(
     if not gerar_automatico:
         # Manual: este é o único prompt de schema de origem, então ele vale.
         # No automático quem manda é a marcação de schemas feita na geração.
+        etapa("schemas_origem")
         origem["schema"] = _schema_origem_manual(adapter_origem, origem, origem_conectou)
 
     context = {
@@ -581,6 +617,7 @@ def init(
     else:
         schemas_render(project_dir, context)
 
+    etapa("schedules")
     console.print(separador())
     opcao_sim_schedules = t("Sim, gerar schedules e código Dagster padrão")
     opcao_nao = t("Não, deixar para depois")
@@ -594,6 +631,7 @@ def init(
         gerar_schedules_automaticos(project_dir, nome_projeto)
 
     if gerar_automatico and gerou:
+        etapa("ddl")
         opcao_aplicar = t("Aplicar agora no banco de destino")
         opcao_apenas = t("Apenas gerar o DDL (aplicar depois)")
         aplicar_ddl = selecionar(
@@ -628,6 +666,7 @@ def init(
 
         gerar_comando_dagster(project_dir)
 
+        etapa("dagster")
         console.print(separador())
         opcao_subir = t("Sim, subir agora")
         subir_dagster = selecionar("Deseja subir o servidor Dagster agora?", [opcao_subir, opcao_nao])
@@ -651,6 +690,12 @@ def ddl(
     apply: bool = typer.Option(None, "--apply/--no-apply", help=t("Executa o DDL no banco de destino (sem perguntar)")),
 ):
     """Converte os schemas YAML em DDL e cria as tabelas no banco de destino."""
+    return rodar_no_shell(ETAPAS_DDL, "ddl", _ddl_corpo, directory, output, apply)
+
+
+def _ddl_corpo(directory: str, output: Optional[str], apply: Optional[bool]) -> None:
+    """Corpo do ``conduto ddl`` — roda dentro do shell (ou direto, sem TTY)."""
+    etapa("ddl_aplicacao")
     project_dir = Path(directory)
     try:
         credenciais, tipo = credenciais_destino(project_dir)

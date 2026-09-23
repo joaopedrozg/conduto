@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
-from rich.console import Console
 
 from conduto.database.adapters import (
     ADAPTERS,
@@ -20,8 +19,7 @@ from conduto.database.adapters import (
 from conduto.database.admin import schema_padrao_sgbd
 from conduto.database.drivers import importar_driver
 from conduto.database.particularidades import PARTICULARIDADES
-
-console = Console()
+from conduto.ui import console  # o proxy: no shell, os avisos vão pro registro
 
 
 # ---------------------------------------------------------------------------

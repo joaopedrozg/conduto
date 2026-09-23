@@ -20,10 +20,20 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from conduto.i18n import t
 from conduto.tui.modelo import MULTIPLA, UNICA, Choice, ModeloSelecao, para_choice
+from conduto.tui.paineis import (
+    TIPO_CONFIRMACAO,
+    TIPO_MULTIPLA,
+    TIPO_TEXTO,
+    TIPO_UNICA,
+    PainelConfirmacao,
+    PainelSelecao,
+    PainelTexto,
+)
+from conduto.tui.shell import sessao_ativa
 from conduto.tui.telas import TelaConfirmacao, TelaSelecao, TelaTexto
 
 __all__ = [
@@ -78,6 +88,25 @@ def _dica_de(kwargs: Dict[str, Any]) -> Optional[str]:
 def _mostrar_dica(dica: Optional[str]) -> None:
     if dica:
         print(f"  {dica}")
+
+
+# ---------------------------------------------------------------------------
+# Shell do wizard (o prompt vira painel dentro da etapa atual)
+# ---------------------------------------------------------------------------
+
+
+def _no_shell(especificacao: Dict[str, Any], construir: Callable[[], Any]) -> Tuple[bool, Any]:
+    """``(houve, resposta)`` — True quando o prompt foi atendido pelo shell.
+
+    Dentro do ``conduto init``/``ddl`` (sessão do wizard aberta) o prompt
+    bloqueia num futuro que a UI resolve: o corpo espera como sempre e o
+    painel aparece na etapa atual. Sem sessão (prompt avulso, testes) o
+    chamador segue o caminho de sempre — tela cheia ou ``input()``.
+    """
+    sessao = sessao_ativa()
+    if sessao is None:
+        return False, None
+    return True, sessao.esperar(especificacao, construir)
 
 
 # ---------------------------------------------------------------------------
@@ -173,11 +202,26 @@ def selecionar(pergunta: str, escolhas: Sequence[Any], **kwargs: Any) -> Any:
     if dica:
         dica = t(dica, **formatacao)
 
+    modelo = ModeloSelecao(list(escolhas), modo=UNICA)
+    houve, resposta = _no_shell(
+        {
+            "tipo": TIPO_UNICA,
+            "pergunta": texto,
+            "dica": dica,
+            "escolhas": list(modelo.itens),
+            "com_busca": False,
+        },
+        lambda: PainelSelecao(
+            pergunta=texto, modelo=modelo, instrucao=dica, com_busca=False
+        ),
+    )
+    if houve:
+        return resposta[0] if resposta else None
+
     if not _tem_terminal():
         resultado = _escolher_sem_tty(texto, escolhas, UNICA, dica)
         return resultado[0] if resultado else None
 
-    modelo = ModeloSelecao(list(escolhas), modo=UNICA)
     tela = TelaSelecao(pergunta=texto, modelo=modelo, instrucao=dica, com_busca=False)
     resultado = tela.rodar()
     return resultado[0] if resultado else None
@@ -200,10 +244,28 @@ def multi_selecionar(
     texto = t(pergunta, **formatacao)
     dica = t(instrucao, **formatacao) if instrucao else None
 
+    modelo = ModeloSelecao(list(escolhas), modo=MULTIPLA)
+    houve, resposta = _no_shell(
+        {
+            "tipo": TIPO_MULTIPLA,
+            "pergunta": texto,
+            "dica": dica,
+            "escolhas": list(modelo.itens),
+            "com_busca": bool(use_search_filter),
+        },
+        lambda: PainelSelecao(
+            pergunta=texto,
+            modelo=modelo,
+            instrucao=dica,
+            com_busca=bool(use_search_filter),
+        ),
+    )
+    if houve:
+        return resposta
+
     if not _tem_terminal():
         return _escolher_sem_tty(texto, escolhas, MULTIPLA, dica)
 
-    modelo = ModeloSelecao(list(escolhas), modo=MULTIPLA)
     tela = TelaSelecao(
         pergunta=texto,
         modelo=modelo,
@@ -222,6 +284,20 @@ def confirmar(pergunta: str, padrao: bool = True, **kwargs: Any) -> Optional[boo
     dica = _dica_de(kwargs)
     if dica:
         dica = t(dica, **formatacao)
+
+    houve, resposta = _no_shell(
+        {
+            "tipo": TIPO_CONFIRMACAO,
+            "pergunta": texto,
+            "dica": dica,
+            "padrao": bool(padrao),
+        },
+        lambda: PainelConfirmacao(
+            pergunta=texto, padrao=bool(padrao), instrucao=dica
+        ),
+    )
+    if houve:
+        return resposta
 
     if not _tem_terminal():
         _mostrar_dica(dica)
@@ -257,6 +333,24 @@ def pedir(
     dica = _dica_de(kwargs)
     if dica:
         dica = t(dica, **formatacao)
+
+    houve, resposta = _no_shell(
+        {
+            "tipo": TIPO_TEXTO,
+            "pergunta": texto,
+            "dica": dica,
+            "valor": padrao_txt,
+            "senha": bool(senha),
+        },
+        lambda: PainelTexto(
+            pergunta=texto,
+            valor_inicial=padrao_txt,
+            senha=bool(senha),
+            instrucao=dica,
+        ),
+    )
+    if houve:
+        return resposta
 
     if not _tem_terminal():
         _mostrar_dica(dica)

@@ -14,7 +14,7 @@ from conduto.database.introspect import (
 )
 from conduto.i18n import t
 from conduto.tui import Choice, Status
-from conduto.ui import aviso, carregando, console, erro, gerado, info, multi_selecionar, progresso
+from conduto.ui import aviso, carregando, console, erro, etapa, gerado, info, multi_selecionar, progresso
 
 # Mesma instrucao nas duas telas: setas navegam, espaco marca uma a uma,
 # "a" marca todas as visiveis, "l" limpa, digito filtra, enter confirma.
@@ -93,6 +93,7 @@ def gerar_schemas_automaticos(
     Retorna True se os schemas foram gerados automaticamente, False caso contrário.
     Os YAMLs gerados apontam para o schema de destino já escolhido/criado pelo usuário.
     """
+    etapa("schemas_origem")  # no shell, alimenta a etapa de flegagem de schemas
     with carregando("Lendo tabelas do banco de origem..."):
         tabelas = listar_tabelas(adapter, credenciais)
 
@@ -110,6 +111,7 @@ def gerar_schemas_automaticos(
         _escolha_de_tabela(tabela, schemas_dir)
         for tabela in tabelas
     ]
+    etapa("tabelas")  # no shell, alimenta a etapa de flegagem de tabelas
     selecionadas = multi_selecionar(
         "Selecione as tabelas para gerar os schemas:",
         escolhas,
