@@ -503,6 +503,71 @@ class TestCaminhosDeCarga(unittest.TestCase):
         # Só a coluna de texto (indice 0) foi coerida; a tinyint ficou int.
         self.assertEqual(linhas, [("True", 1)])
 
+    def test_clickhouse_recebe_date_como_data_e_nao_como_texto(self):
+        """Regressao: `date` virava str e o driver estourava em coluna Date.
+
+        O `clickhouse_connect` serializa Date em binario com
+        `(valor - epoch).days`; uma str nao subtrai datetime.date, entao o
+        comando inteiro morria com
+        `TypeError: unsupported operand type(s) for -: 'str' and 'datetime.date'`.
+        """
+        modulo = _carregar_modulo_template()
+        conn = _ConexaoClickHouse()
+        tabela = {
+            "table": "clientes",
+            "columns": [
+                {"name": "Nome", "type": "varchar"},
+                {"name": "Nascimento", "type": "date"},
+            ],
+        }
+        nascimento = datetime.date(1990, 5, 17)
+        fila = _fila(modulo, ["Nome", "Nascimento"], [("Ana", nascimento)])
+
+        total = modulo["_copiar"](conn, "clickhouse", "`clientes`", fila, None, tabela)
+
+        self.assertEqual(total, 1)
+        _, linhas, _ = conn._client.inseridos[0]
+        # A coluna de texto segue str; a de data chega como objeto de verdade.
+        self.assertEqual(linhas, [("Ana", nascimento)])
+        self.assertIsInstance(linhas[0][1], datetime.date)
+
+    def test_clickhouse_coage_date_para_texto_quando_o_schema_manda(self):
+        """O inverso da regressao: coluna de texto pede str, mesmo vindo de date.
+
+        Sem isto, preservar o `date` trocava o TypeError por
+        `AttributeError: 'datetime.date' object has no attribute 'encode'`.
+        """
+        modulo = _carregar_modulo_template()
+        conn = _ConexaoClickHouse()
+        tabela = {
+            "table": "clientes",
+            "columns": [{"name": "Cadastro", "type": "varchar"}],
+        }
+        fila = _fila(modulo, ["Cadastro"], [(datetime.date(1990, 5, 17),)])
+
+        total = modulo["_copiar"](conn, "clickhouse", "`clientes`", fila, None, tabela)
+
+        self.assertEqual(total, 1)
+        _, linhas, _ = conn._client.inseridos[0]
+        self.assertEqual(linhas, [("1990-05-17",)])
+        self.assertIsInstance(linhas[0][0], str)
+
+    def test_clickhouse_coage_datetime_para_texto_quando_o_schema_manda(self):
+        """`datetime` em coluna de texto tambem tem de virar str."""
+        modulo = _carregar_modulo_template()
+        conn = _ConexaoClickHouse()
+        tabela = {
+            "table": "clientes",
+            "columns": [{"name": "Atualizado", "type": "text"}],
+        }
+        momento = datetime.datetime(2026, 9, 22, 10, 30, 0)
+        fila = _fila(modulo, ["Atualizado"], [(momento,)])
+
+        modulo["_copiar"](conn, "clickhouse", "`clientes`", fila, None, tabela)
+
+        _, linhas, _ = conn._client.inseridos[0]
+        self.assertEqual(linhas, [("2026-09-22 10:30:00",)])
+
     def test_duckdb_registra_a_tabela_arrow_e_desregistra(self):
         modulo = _carregar_modulo_template()
         conn = _ConexaoDuckDB()
@@ -640,7 +705,13 @@ class TestSerializacaoDaCarga(unittest.TestCase):
         bloco = modulo["_bloco_copy"]([("Ana", 1), ("B\x00ia", None)])
         self.assertEqual(bloco, b"Ana\t1\nBia\t\\N\n")
 
-    def test_serializar_converte_dict_e_date_e_passa_datetime(self):
+    def test_serializar_converte_dict_e_passa_date_e_datetime(self):
+        """Date e datetime passam como objeto: o ClickHouse exige `datetime.date`.
+
+        String so no COPY (via `_valor_copy`), que serializa em texto por ser
+        um protocolo textual — nos drivers de objeto a data tem de chegar
+        como data, ou o binario de Date do `clickhouse_connect` estoura.
+        """
         modulo = _carregar_modulo_template()
         serializar = modulo["_serializar"]
         self.assertEqual(serializar({"x": 1}), '{"x": 1}')
@@ -648,7 +719,12 @@ class TestSerializacaoDaCarga(unittest.TestCase):
 
         momento = datetime.datetime(2026, 9, 22, 10, 0, 0)
         self.assertIs(serializar(momento), momento)  # datetime passa direto
-        self.assertEqual(serializar(datetime.date(2026, 9, 22)), "2026-09-22")
+
+        nascimento = datetime.date(1990, 5, 17)
+        self.assertIs(serializar(nascimento), nascimento)  # date tambem
+
+        # ...mas um texto de data continua texto (origem ja em varchar)
+        self.assertEqual(serializar("1990-05-17"), "1990-05-17")
 
     def test_serializar_remove_nul_e_stringiza_o_desconhecido(self):
         modulo = _carregar_modulo_template()

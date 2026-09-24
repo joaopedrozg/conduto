@@ -534,15 +534,19 @@ def _sanitizar(valor: Any) -> Any:
 
 
 def _serializar(valor: Any) -> Any:
-    """Converte dicts/listas para JSON e tipos desconhecidos para string antes de gravar no banco."""
+    """Converte dicts/listas para JSON e tipos desconhecidos para string antes de gravar no banco.
+
+    ``date`` e ``datetime`` passam como objeto: os drivers de objeto exigem a
+    data de verdade (o ``clickhouse_connect`` serializa ``Date`` em binario
+    com ``valor - epoch`` e uma str estoura com ``TypeError``). Textual so o
+    COPY, que e um protocolo de texto e serializa via :func:`_valor_copy`.
+    """
     if isinstance(valor, (dict, list)):
         return json.dumps(_sanitizar(valor), ensure_ascii=False)
     if isinstance(valor, str):
         return valor.replace("\x00", "") if "\x00" in valor else valor
-    if isinstance(valor, datetime.datetime):
+    if isinstance(valor, (datetime.datetime, datetime.date)):
         return valor
-    if isinstance(valor, datetime.date):
-        return valor.isoformat()
     if isinstance(valor, (int, float, bool, type(None), bytes)):
         return valor
     return str(valor)
@@ -812,15 +816,28 @@ def _copiar_duckdb(conn, destino: str, fila, context=None) -> int:
 _TIPOS_TEXTO_CLICKHOUSE = {"text", "varchar", "char", "enum", "user-defined", "xml", "time", "timetz"}
 
 
+def _e_nao_texto(valor: Any) -> bool:
+    """True quando o valor nao e str e por isso precisa ser stringizado.
+
+    Cobertura dos tipos que chegam nativos de um driver e que o driver do
+    ClickHouse rejeita em colunas String/FixedString (ele chama ``.encode``):
+    bool (ex.: TINYINT(1) do MySQL), date e datetime. ``datetime.date`` ja
+    cobre ``datetime.datetime`` por ser a superclasse.
+    """
+    return isinstance(valor, (bool, datetime.date))
+
+
 def _copiar_clickhouse(
     conn, destino: str, fila, context=None, tabela: Optional[Dict[str, Any]] = None
 ) -> int:
     """Grava os lotes no ClickHouse com o INSERT nativo do client HTTP.
 
     Colunas cujo tipo no schema mapeia para String/FixedString no ClickHouse
-    recebem coercao de bool para str: a origem pode entregar um bool (ex.:
-    TINYINT(1) do MySQL) para uma coluna declarada como texto, e o driver do
-    ClickHouse so aceita str/bytes para colunas de texto.
+    recebem coercao para str de bool, date e datetime: a origem pode entregar
+    um bool (ex.: TINYINT(1) do MySQL) ou uma data para uma coluna declarada
+    como texto, e o driver do ClickHouse so aceita str/bytes em colunas de
+    texto (`date.encode` nao existe). O inverso nao precisa de nada: coluna de
+    data ja recebe o objeto, graças a :func:`_serializar`.
     """
     primeiro = fila.get()
     if isinstance(primeiro, Exception):
@@ -845,7 +862,7 @@ def _copiar_clickhouse(
         if indices_texto:
             linhas = [
                 tuple(
-                    str(v) if i in indices_texto and isinstance(v, bool) else v
+                    str(v) if i in indices_texto and _e_nao_texto(v) else v
                     for i, v in enumerate(linha)
                 )
                 for linha in linhas
