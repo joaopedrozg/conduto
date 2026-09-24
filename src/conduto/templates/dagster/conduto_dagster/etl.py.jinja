@@ -815,6 +815,14 @@ def _copiar_duckdb(conn, destino: str, fila, context=None) -> int:
 
 _TIPOS_TEXTO_CLICKHOUSE = {"text", "varchar", "char", "enum", "user-defined", "xml", "time", "timetz"}
 
+# O DDL do ClickHouse (ver _TIPOS_POR_SGBD em conduto.ddl.ddl_render) converte
+# estes tipos canonicos em Date32/DateTime64, que o driver grava em binario
+# com `valor - epoch`: uma str estoura `TypeError: unsupported operand type(s)
+# for -: 'str' and 'datetime.date'`. O inverso (objeto em coluna de texto) e
+# coberto por _e_nao_texto.
+_TIPOS_DATA_CLICKHOUSE = {"date"}
+_TIPOS_DATETIME_CLICKHOUSE = {"timestamp", "timestamptz"}
+
 
 def _e_nao_texto(valor: Any) -> bool:
     """True quando o valor nao e str e por isso precisa ser stringizado.
@@ -827,17 +835,59 @@ def _e_nao_texto(valor: Any) -> bool:
     return isinstance(valor, (bool, datetime.date))
 
 
+def _texto_para_data(valor: str, alvo: Any, coluna: str, onde: str) -> Any:
+    """Converte str em ``date``/``datetime`` para uma coluna de data.
+
+    A origem entrega texto quando a coluna e varchar na fonte e o ``type:`` do
+    YAML aponta para ``date``/``timestamp``. Aceita o formato ISO com
+    separador ``T`` ou espaco, com ou sem hora e fuso — o minimo suportado e o
+    Python 3.10, cujo ``fromisoformat`` nao e tao permissivo quanto o do 3.11+.
+    Branco vira ``None`` (null no banco). Qualquer outro formato levanta
+    ``ValueError`` com tabela e coluna: o ``TypeError`` que o driver daria nao
+    diz onde esta o problema.
+    """
+    bruto = valor.strip()
+    if not bruto:
+        return None
+    candidato = bruto.replace(" ", "T") if " " in bruto else bruto
+    try:
+        momento = datetime.datetime.fromisoformat(candidato)
+    except ValueError as exc:
+        raise ValueError(
+            f"{onde}.{coluna}: {valor!r} nao e uma data/hora ISO valida"
+        ) from exc
+    return momento.date() if alvo is datetime.date else momento
+
+
+def _coagir_data(valor: Any, indice: int, alvos: Dict[int, Any], onde: str) -> Any:
+    """Aplica a coercao de data so onde o schema manda e o valor veio como texto.
+
+    Objeto e null ja estao prontos para o driver e passam direto.
+    """
+    alvo_e_coluna = alvos.get(indice)
+    if alvo_e_coluna is None or not isinstance(valor, str):
+        return valor
+    return _texto_para_data(valor, alvo_e_coluna[0], alvo_e_coluna[1], onde)
+
+
 def _copiar_clickhouse(
     conn, destino: str, fila, context=None, tabela: Optional[Dict[str, Any]] = None
 ) -> int:
     """Grava os lotes no ClickHouse com o INSERT nativo do client HTTP.
 
-    Colunas cujo tipo no schema mapeia para String/FixedString no ClickHouse
-    recebem coercao para str de bool, date e datetime: a origem pode entregar
-    um bool (ex.: TINYINT(1) do MySQL) ou uma data para uma coluna declarada
-    como texto, e o driver do ClickHouse so aceita str/bytes em colunas de
-    texto (`date.encode` nao existe). O inverso nao precisa de nada: coluna de
-    data ja recebe o objeto, graças a :func:`_serializar`.
+    A fronteira de tipo e fechada antes do insert, porque o driver nao faz
+    nenhuma conversa implicita:
+
+    * coluna de texto (String/FixedString) recebe coercao para ``str`` de
+      bool, date, datetime e time — a origem pode mandar um ``TINYINT(1)`` do
+      MySQL ou uma data para uma coluna declarada como texto, e o driver chama
+      ``.encode`` em cima do objeto;
+    * coluna de data (Date32/DateTime64) faz o caminho inverso: texto ISO vira
+      ``date``/``datetime``, porque o driver serializa em binario com
+      ``valor - epoch`` e estoura ``TypeError`` em cima de ``str``.
+
+    Quem define qual coluna cai em qual lado e o ``type:`` canonico do
+    catalogo, o mesmo que gera o DDL.
     """
     primeiro = fila.get()
     if isinstance(primeiro, Exception):
@@ -845,11 +895,20 @@ def _copiar_clickhouse(
     colunas = list(primeiro)
     if not colunas:
         return 0
-    colunas_texto = {
-        c["name"] for c in (tabela or {}).get("columns", [])
-        if (c.get("type") or "").lower() in _TIPOS_TEXTO_CLICKHOUSE
+    tipos = {
+        c["name"]: (c.get("type") or "").lower()
+        for c in (tabela or {}).get("columns", [])
     }
-    indices_texto = [i for i, nome in enumerate(colunas) if nome in colunas_texto]
+    indices_texto = []
+    alvos_data: Dict[int, Any] = {}
+    for i, nome in enumerate(colunas):
+        tipo = tipos.get(nome, "")
+        if tipo in _TIPOS_TEXTO_CLICKHOUSE:
+            indices_texto.append(i)
+        elif tipo in _TIPOS_DATA_CLICKHOUSE:
+            alvos_data[i] = (datetime.date, nome)
+        elif tipo in _TIPOS_DATETIME_CLICKHOUSE:
+            alvos_data[i] = (datetime.datetime, nome)
     nome_tabela = destino.replace("`", "")
     total = 0
     while True:
@@ -863,6 +922,14 @@ def _copiar_clickhouse(
             linhas = [
                 tuple(
                     str(v) if i in indices_texto and _e_nao_texto(v) else v
+                    for i, v in enumerate(linha)
+                )
+                for linha in linhas
+            ]
+        if alvos_data:
+            linhas = [
+                tuple(
+                    _coagir_data(v, i, alvos_data, nome_tabela)
                     for i, v in enumerate(linha)
                 )
                 for linha in linhas
