@@ -31,6 +31,7 @@ CLI para criar projetos de migração/ELT de dados: gera o `.env` com as credenc
 - Download/instalação automática do ODBC Driver for SQL Server (Windows, Linux e macOS)
 - Feedback visual com `rich` e `textual`: paleta discreta em que **cada cor é um status** (verde = sucesso/marcado, âmbar = atenção, vermelho = erro, azul = informação, cinza = neutro), tabelas de resumo e widgets de carregamento (spinner e barra de progresso) nas operações demoradas
 - Telas de seleção modernas (Textual) com filtro de busca, marcação item a item, **"selecionar todas"** (as visíveis) e limpar — nos schemas de origem e nas tabelas
+- Saída do wizard guardada em SQLite (`~/.conduto/registros.db`, sobrescrevível com `CONDUTO_REGISTROS`): em vez de piscar log antigo a cada troca de etapa, a área de conteúdo mostra só a etapa atual e o registro abre no **`F3`**, com horário, etapa e rolagem — a saída continua sendo reproduzida no terminal quando o shell fecha
 - Detecção automática do idioma da máquina (português ou inglês) com override por comando (`--lang`) ou variável de ambiente (`CONDUTO_LANG`)
 
 ## Instalação

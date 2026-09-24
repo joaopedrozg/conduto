@@ -56,8 +56,10 @@ class _ConsoleDoShell:
 
     Sem sessão é o Console rich de sempre (testes, pipes e o CLI avulso não
     percebem diferença — inclusive ``capture()``); com sessão, cada ``print``
-    é guardado e espelhado no ``RichLog`` do shell — e reproduzido no
-    terminal real quando ele fecha, para nada se perder.
+    vira uma linha do SQLite dos registros (:mod:`conduto.tui.registros`) —
+    consultável com o ``F3`` dentro do shell — e continua guardado no buffer
+    para ser reproduzido no terminal real quando ele fecha, para nada se
+    perder.
     """
 
     def __init__(self) -> None:

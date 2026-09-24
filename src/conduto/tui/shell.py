@@ -18,16 +18,23 @@ Estado         Significado
 ``PENDENTE``   ainda vai vir (cinza ○)
 =============  =========================================================
 
-O rodapé mostra os atalhos globais (``F2`` etapas, ``esc`` voltar); cada
-painel acrescenta os seus (``enter`` confirmar, ``esc`` cancelar...) pela
-cadeia de foco. Cores são sempre status (ver :mod:`conduto.tui.tema`).
+A saída do corpo **não fica mais na área de conteúdo**: um único ``RichLog``,
+servido a todas as etapas e nunca limpo, mostrava log velho a cada troca de
+passo (a "piscada" ao finalizar uma etapa). Cada ``console.print`` vai para o
+SQLite (:mod:`conduto.tui.registros`) e a tela só aparece no ``F3``.
+
+O rodapé mostra os atalhos globais (``F2`` etapas, ``F3`` registros, ``esc``
+voltar); cada painel acrescenta os seus (``enter`` confirmar, ``esc``
+cancelar...) pela cadeia de foco. Cores são sempre status (ver
+:mod:`conduto.tui.tema`).
 """
 
 from __future__ import annotations
 
 import threading
+import uuid
 from collections import deque
-from concurrent.futures import Future
+from concurrent.futures import CancelledError, Future
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -37,11 +44,12 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Footer, OptionList, RichLog, Static
+from textual.widgets import Footer, OptionList, Static
 from textual.widgets.option_list import Option
 
 from conduto import __version__
 from conduto.i18n import t
+from conduto.tui import registros
 from conduto.tui.paineis import Revisao
 from conduto.tui.tema import COR_TEXTO, CSS_TEMA, Status, cor, glifo
 
@@ -221,11 +229,13 @@ class Sessao:
         self._shell_fechado = threading.Event()
         #: Saída rica guardada enquanto o shell está no ar (reproduzida ao fechar).
         self.buffer_console: deque = deque(maxlen=_MAX_SAIDA_GUARDADA)
+        #: Chave desta sessão no SQLite dos registros (comando + sufixo único).
+        self.id_registro: str = f"{comando}-{uuid.uuid4().hex[:8]}"
+        #: A tela de registros (``F3``) quando aberta — o corpo espelha nela.
+        self.tela_registros: Optional[Any] = None
         #: Revisão montada por etapa com a versão de respostas em que vale.
         self._revisoes: Dict[str, Tuple[int, Revisao]] = {}
         self._versao: int = 0
-        #: Clique na etapa atual já respondida alterna registro x revisão.
-        self._mostrar_log: bool = True
 
     # ------------------------------------------------------------------
     # Etapas (alimentadas pelos marcadores ``etapa()`` do corpo)
@@ -262,7 +272,6 @@ class Sessao:
             self.visitados.add(anterior)
         self.atual = novo
         self.selecionado = novo
-        self._mostrar_log = True  # etapa nova começa no registro
         self._na_ui(self._desenhar_ui)
 
     def atividade(self, texto: str) -> None:
@@ -355,13 +364,6 @@ class Sessao:
         """Clique/enter numa etapa do menu: leva o conteúdo para ela."""
         if not 0 <= indice < len(self.etapas):
             return
-        if (
-            indice == self.atual
-            and self.pendente is None
-            and self.respostas.get(self._chave(indice))
-        ):
-            # Etapa atual já respondida: alterna entre registro e revisão.
-            self._mostrar_log = not self._mostrar_log
         self.selecionado = indice
         self._atualizar_conteudo()
 
@@ -419,30 +421,20 @@ class Sessao:
     # ------------------------------------------------------------------
 
     def registrar_console(self, args: tuple, kwargs: dict) -> None:
-        """Guarda a saída e a espelha no registro (``RichLog``) da tela."""
-        self.buffer_console.append((args, kwargs))
-        if not self._app_vivo:
-            return
-        self._na_ui(self._registrar_ui, args, kwargs)
+        """Guarda a saída no buffer (reprodução) e no SQLite (consulta no F3).
 
-    def _registrar_ui(self, args: tuple, kwargs: dict) -> None:
-        if self.app is None:
-            return
-        if args:
-            conteudo: Any = (
-                args[0] if len(args) == 1 else " ".join(str(a) for a in args)
-            )
-        else:
-            conteudo = str(kwargs)
-        if isinstance(conteudo, str):
-            if kwargs.get("markup", True) is False:
-                conteudo = Text(conteudo)  # literal (SQL com colchetes, ex.)
-            else:
-                try:
-                    conteudo = Text.from_markup(conteudo)
-                except Exception:
-                    conteudo = Text(conteudo)
-        self.app.query_one("#registro", RichLog).write(conteudo)
+        Nada mais é escrito na tela daqui: o registro mora no banco e só
+        aparece quando o usuário abre com ``F3`` — se a tela estiver no ar,
+        a linha nova é espelhada ao vivo, sem reler tudo.
+        """
+        self.buffer_console.append((args, kwargs))
+        etapa_chave = None if self.atual is None else self._chave(self.atual)
+        registro = registros.gravar(
+            self.id_registro, self.comando, etapa_chave, args, kwargs
+        )
+        if registro is None or self.tela_registros is None:
+            return  # sem banco, ou a tela de registros não está aberta
+        self._na_ui(self.tela_registros.anexar, registro)
 
     def reproduzir_console(self) -> None:
         """Devolve a saída guardada ao terminal real depois que o shell fecha."""
@@ -481,8 +473,11 @@ class Sessao:
             return
         try:
             self.app.call_from_thread(funcao, *args)
-        except RuntimeError:
-            pass  # shell fechando: o finally de rodar_no_shell destrava o corpo
+        except (RuntimeError, CancelledError):
+            # Shell fechando: a chamada nem chegou a rodar (o Textual devolve
+            # CancelledError quando o app saiu no meio). O finally de
+            # rodar_no_shell destrava o corpo.
+            pass
 
     def _sair_ui(self) -> None:
         """Fecha o app (fim do corpo, ou o chamador pediu ``sair()``)."""
@@ -525,9 +520,6 @@ class Sessao:
     def _menu(self) -> "MenuEtapas":
         return self.app.query_one("#menu", MenuEtapas)
 
-    def _registro(self) -> RichLog:
-        return self.app.query_one("#registro", RichLog)
-
     def _mensagem(self, identificador: str) -> Static:
         return self.app.query_one(f"#{identificador}", Static)
 
@@ -535,17 +527,19 @@ class Sessao:
         """Widget do conteúdo da etapa ``indice``.
 
         A atual tem prioridade para o prompt pendente; depois vem a revisão
-        (etapa já respondida) e o registro do shell. Etapas de trás mostram a
-        revisão ou o motivo de não ter perguntado; as da frente, o aviso de
-        que ainda vão vir.
+        (etapa já respondida) e, enquanto o corpo computa, o aviso de etapa em
+        andamento — o registro não mora mais aqui, então uma troca de passo
+        nunca mostra log velho (está no SQLite, no ``F3``). Etapas de trás
+        mostram a revisão ou o motivo de não ter perguntado; as da frente, o
+        aviso de que ainda vão vir.
         """
         painel = self.painel_pendente
         if self.atual is None or indice == self.atual:
             if painel is not None:
                 return painel
-            if self.respostas.get(self._chave(indice)) and not self._mostrar_log:
+            if self.respostas.get(self._chave(indice)):
                 return self._revisao(indice)
-            return self._registro()
+            return self._mensagem("msg-executando")
         if indice < self.atual or indice in self.visitados:
             if self.respostas.get(self._chave(indice)):
                 return self._revisao(indice)
@@ -661,6 +655,7 @@ class WizardApp(App):
         self._thread: Optional[threading.Thread] = None
         # Bindings de instância para traduzir na hora (--lang muda no meio).
         self.bind("f2", "alternar_menu", description=t("Etapas"), key_display="F2")
+        self.bind("f3", "registros", description=t("Registros"), key_display="F3")
         self.bind("escape", "voltar", description=t("Voltar"))
         sessao.app = self
 
@@ -669,7 +664,16 @@ class WizardApp(App):
         with Horizontal(id="corpo"):
             yield MenuEtapas(self._sessao, id="menu")
             with Vertical(id="conteudo"):
-                yield RichLog(id="registro", max_lines=500)
+                yield Static(
+                    t("Etapa em andamento.")
+                    + "\n"
+                    + t(
+                        "F3 abre os registros ({arquivo}).",
+                        arquivo=str(registros.caminho()),
+                    ),
+                    id="msg-executando",
+                    classes="conteudo-msg",
+                )
                 yield Static(
                     t("Etapa aguardando as anteriores."),
                     id="msg-aguardar",
@@ -723,6 +727,20 @@ class WizardApp(App):
     def action_voltar(self) -> None:
         """``esc`` fora do painel: volta para a etapa em que o corpo está."""
         self._sessao.voltar()
+
+    def action_registros(self) -> None:
+        """``F3``: abre os registros guardados no banco (``esc``/``F3`` fecha).
+
+        É modal de propósito: o prompt pendente continua montado embaixo e o
+        futuro do corpo não é tocado — dá para ler e responder depois.
+        """
+        sessao = self._sessao
+        if sessao.tela_registros is not None:
+            return  # já aberta: quem fecha é o F3 de dentro dela
+        try:
+            self.push_screen(registros.TelaRegistros(sessao))
+        except Exception:
+            pass  # shell fechando: abrir registro não pode atrapalhar a saída
 
     def action_cancelar(self) -> None:
         """``ctrl+c``/``ctrl+q``: cancela o prompt ou abandona o fluxo."""
@@ -780,6 +798,7 @@ def rodar_no_shell(
         return funcao(*args, **kwargs)
 
     sessao = Sessao(etapas, comando)
+    registros.podar()  # apaga o que passou do prazo antes de começar a gravar
     aplicativo = WizardApp(sessao, funcao, args, kwargs)
     try:
         aplicativo.run()

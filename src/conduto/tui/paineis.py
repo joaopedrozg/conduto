@@ -28,6 +28,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.coordinate import Coordinate
+from textual.css.query import NoMatches
 from textual.widgets import Button, DataTable, Input, Static
 
 from conduto.i18n import t
@@ -276,10 +277,17 @@ class PainelSelecao(_Painel):
     def on_mount(self) -> None:
         super().on_mount()  # foco pós-montagem (focar_ao_montar do shell)
         self._desenhar_linhas()
-        if self.modelo.modo == MULTIPLA:
-            self.query_one("#btn-todas", Button).tooltip = t(
-                "Marca só o que está visível com o filtro atual."
-            )
+        if self.modelo.modo != MULTIPLA:
+            return
+        try:
+            botao = self.query_one("#btn-todas", Button)
+        except NoMatches:
+            # O shell pode estar fechando no meio da montagem: o corpo acabou
+            # logo depois da resposta e o ``app.exit()`` derrubou a barra
+            # (neta no DOM) antes de ela subir. O tooltip é enfeite — não
+            # pode derrubar o comando com um NoMatches.
+            return
+        botao.tooltip = t("Marca só o que está visível com o filtro atual.")
 
     def focar(self) -> None:
         if self.com_busca and not self.bloqueado:
