@@ -503,6 +503,71 @@ class TestCaminhosDeCarga(unittest.TestCase):
         # Só a coluna de texto (indice 0) foi coerida; a tinyint ficou int.
         self.assertEqual(linhas, [("True", 1)])
 
+    def test_clickhouse_recebe_date_como_data_e_nao_como_texto(self):
+        """Regressao: `date` virava str e o driver estourava em coluna Date.
+
+        O `clickhouse_connect` serializa Date em binario com
+        `(valor - epoch).days`; uma str nao subtrai datetime.date, entao o
+        comando inteiro morria com
+        `TypeError: unsupported operand type(s) for -: 'str' and 'datetime.date'`.
+        """
+        modulo = _carregar_modulo_template()
+        conn = _ConexaoClickHouse()
+        tabela = {
+            "table": "clientes",
+            "columns": [
+                {"name": "Nome", "type": "varchar"},
+                {"name": "Nascimento", "type": "date"},
+            ],
+        }
+        nascimento = datetime.date(1990, 5, 17)
+        fila = _fila(modulo, ["Nome", "Nascimento"], [("Ana", nascimento)])
+
+        total = modulo["_copiar"](conn, "clickhouse", "`clientes`", fila, None, tabela)
+
+        self.assertEqual(total, 1)
+        _, linhas, _ = conn._client.inseridos[0]
+        # A coluna de texto segue str; a de data chega como objeto de verdade.
+        self.assertEqual(linhas, [("Ana", nascimento)])
+        self.assertIsInstance(linhas[0][1], datetime.date)
+
+    def test_clickhouse_coage_date_para_texto_quando_o_schema_manda(self):
+        """O inverso da regressao: coluna de texto pede str, mesmo vindo de date.
+
+        Sem isto, preservar o `date` trocava o TypeError por
+        `AttributeError: 'datetime.date' object has no attribute 'encode'`.
+        """
+        modulo = _carregar_modulo_template()
+        conn = _ConexaoClickHouse()
+        tabela = {
+            "table": "clientes",
+            "columns": [{"name": "Cadastro", "type": "varchar"}],
+        }
+        fila = _fila(modulo, ["Cadastro"], [(datetime.date(1990, 5, 17),)])
+
+        total = modulo["_copiar"](conn, "clickhouse", "`clientes`", fila, None, tabela)
+
+        self.assertEqual(total, 1)
+        _, linhas, _ = conn._client.inseridos[0]
+        self.assertEqual(linhas, [("1990-05-17",)])
+        self.assertIsInstance(linhas[0][0], str)
+
+    def test_clickhouse_coage_datetime_para_texto_quando_o_schema_manda(self):
+        """`datetime` em coluna de texto tambem tem de virar str."""
+        modulo = _carregar_modulo_template()
+        conn = _ConexaoClickHouse()
+        tabela = {
+            "table": "clientes",
+            "columns": [{"name": "Atualizado", "type": "text"}],
+        }
+        momento = datetime.datetime(2026, 9, 22, 10, 30, 0)
+        fila = _fila(modulo, ["Atualizado"], [(momento,)])
+
+        modulo["_copiar"](conn, "clickhouse", "`clientes`", fila, None, tabela)
+
+        _, linhas, _ = conn._client.inseridos[0]
+        self.assertEqual(linhas, [("2026-09-22 10:30:00",)])
+
     def test_duckdb_registra_a_tabela_arrow_e_desregistra(self):
         modulo = _carregar_modulo_template()
         conn = _ConexaoDuckDB()
@@ -640,7 +705,13 @@ class TestSerializacaoDaCarga(unittest.TestCase):
         bloco = modulo["_bloco_copy"]([("Ana", 1), ("B\x00ia", None)])
         self.assertEqual(bloco, b"Ana\t1\nBia\t\\N\n")
 
-    def test_serializar_converte_dict_e_date_e_passa_datetime(self):
+    def test_serializar_converte_dict_e_passa_date_e_datetime(self):
+        """Date e datetime passam como objeto: o ClickHouse exige `datetime.date`.
+
+        String so no COPY (via `_valor_copy`), que serializa em texto por ser
+        um protocolo textual — nos drivers de objeto a data tem de chegar
+        como data, ou o binario de Date do `clickhouse_connect` estoura.
+        """
         modulo = _carregar_modulo_template()
         serializar = modulo["_serializar"]
         self.assertEqual(serializar({"x": 1}), '{"x": 1}')
@@ -648,7 +719,12 @@ class TestSerializacaoDaCarga(unittest.TestCase):
 
         momento = datetime.datetime(2026, 9, 22, 10, 0, 0)
         self.assertIs(serializar(momento), momento)  # datetime passa direto
-        self.assertEqual(serializar(datetime.date(2026, 9, 22)), "2026-09-22")
+
+        nascimento = datetime.date(1990, 5, 17)
+        self.assertIs(serializar(nascimento), nascimento)  # date tambem
+
+        # ...mas um texto de data continua texto (origem ja em varchar)
+        self.assertEqual(serializar("1990-05-17"), "1990-05-17")
 
     def test_serializar_remove_nul_e_stringiza_o_desconhecido(self):
         modulo = _carregar_modulo_template()
@@ -669,6 +745,251 @@ class TestSerializacaoDaCarga(unittest.TestCase):
             {"a": ["x\x00y", {"b": "c\x00d"}], "n": 3}
         )
         self.assertEqual(limpo, {"a": ["xy", {"b": "cd"}], "n": 3})
+
+
+# ==========================================================================
+# C2. Coercao de data no ClickHouse (fronteira str <-> objeto)
+# ==========================================================================
+
+
+class TestCoercaoDeDataNoClickHouse(unittest.TestCase):
+    """Coluna de data exige date/datetime; coluna de texto exige str.
+
+    O driver do ClickHouse serializa Date32/DateTime64 em binario com
+    ``valor - epoch``: uma str estoura ``TypeError``. E em String/FixedString
+    ele chama ``.encode``: um objeto estoura ``AttributeError``. Os dois lados
+    sao testados com o mock que grava o que chegou no ``client.insert``.
+    """
+
+    @staticmethod
+    def _schema(**tipos):
+        """Monta o ``tabela`` do catalogo a partir de {coluna: tipo canonico}."""
+        return {
+            "table": "eventos",
+            "columns": [
+                {"name": nome, "type": tipo} for nome, tipo in tipos.items()
+            ],
+        }
+
+    def _coagir(self, linha, tabela=None, colunas=None):
+        """Manda um lote de 1 linha pelo _copiar e devolve a linha gravada."""
+        modulo = _carregar_modulo_template()
+        conn = _ConexaoClickHouse()
+        if colunas is None:
+            colunas = [c["name"] for c in (tabela or {}).get("columns", [])]
+        fila = queue.Queue()
+        fila.put(colunas)
+        fila.put([linha])
+        fila.put(modulo["_FIM"])
+        modulo["_copiar"](conn, "clickhouse", "`eventos`", fila, None, tabela)
+        return conn._client.inseridos[0][1][0]
+
+    # ---------------------------------------------------------- str -> data
+    def test_str_iso_vira_date_na_coluna_de_data(self):
+        """Regressao do TypeError: o texto vira objeto antes de chegar ao driver."""
+        resultado = self._coagir(
+            ("1990-05-17",), self._schema(nascimento="date")
+        )
+        self.assertEqual(resultado, (datetime.date(1990, 5, 17),))
+        self.assertIsInstance(resultado[0], datetime.date)
+
+    def test_str_com_hora_vira_date_truncado(self):
+        """Coluna Date so quer a parte do dia (a origem pode mandar timestamp)."""
+        resultado = self._coagir(
+            ("1990-05-17 10:30:00",), self._schema(nascimento="date")
+        )
+        self.assertEqual(resultado, (datetime.date(1990, 5, 17),))
+
+    def test_str_iso_com_t_vira_datetime_no_timestamp(self):
+        """Separador T (saida padrao do isoformat)."""
+        resultado = self._coagir(
+            ("1990-05-17T10:30:00",), self._schema(atualizado="timestamp")
+        )
+        self.assertEqual(resultado, (datetime.datetime(1990, 5, 17, 10, 30),))
+
+    def test_str_com_espaco_vira_datetime_no_timestamptz(self):
+        """Separador espaco (formato tipico de varchar de banco legado)."""
+        resultado = self._coagir(
+            ("1990-05-17 10:30:00",), self._schema(atualizado="timestamptz")
+        )
+        self.assertEqual(resultado, (datetime.datetime(1990, 5, 17, 10, 30),))
+
+    def test_str_com_fuso_vira_date_truncado(self):
+        """Fuso nao impede a leitura da parte do dia."""
+        resultado = self._coagir(
+            ("1990-05-17T10:30:00+00:00",), self._schema(nascimento="date")
+        )
+        self.assertEqual(resultado, (datetime.date(1990, 5, 17),))
+
+    def test_str_no_timestamp_nao_vira_date(self):
+        """O alvo vem do schema: timestamp tem de guardar a hora, nao so a data."""
+        resultado = self._coagir(
+            ("1990-05-17 10:30:00",), self._schema(atualizado="timestamp")
+        )
+        # datetime.datetime tambem e subclasse de date, entao o que prova a
+        # diferenca e a hora: um date truncado teria 00:00.
+        self.assertIsInstance(resultado[0], datetime.datetime)
+        self.assertEqual(resultado[0].hour, 10)
+        self.assertEqual(resultado[0].minute, 30)
+
+    # ------------------------------------------------------- objeto -> texto
+    def test_date_nativo_passa_direto(self):
+        """Nada de dupla conversao: o objeto ja esta no formato certo."""
+        nascimento = datetime.date(1990, 5, 17)
+        resultado = self._coagir(
+            (nascimento,), self._schema(nascimento="date")
+        )
+        self.assertIs(resultado[0], nascimento)
+
+    def test_datetime_nativo_passa_direto(self):
+        momento = datetime.datetime(1990, 5, 17, 10, 30, 0)
+        resultado = self._coagir(
+            (momento,), self._schema(atualizado="timestamp")
+        )
+        self.assertIs(resultado[0], momento)
+
+    def test_none_passa_direto_na_coluna_de_data(self):
+        """Null ja e o valor nulo do banco: nenhum conversor tem de tocar."""
+        resultado = self._coagir((None,), self._schema(nascimento="date"))
+        self.assertIsNone(resultado[0])
+
+    def test_string_vazia_vira_none_na_coluna_de_data(self):
+        """VARCHAR vazio nao e data: vira null em vez de estourar no driver."""
+        resultado = self._coagir(("",), self._schema(nascimento="date"))
+        self.assertIsNone(resultado[0])
+
+    # ----------------------------------- quem NAO deve ser convertido
+    def test_str_em_coluna_de_texto_nao_vira_data(self):
+        """O texto tem de continuar texto mesmo parecendo uma data."""
+        resultado = self._coagir(
+            ("1990-05-17",), self._schema(nome="varchar"), colunas=["nome"]
+        )
+        self.assertEqual(resultado, ("1990-05-17",))
+        self.assertIsInstance(resultado[0], str)
+
+    def test_str_em_coluna_numerica_nao_e_tocada(self):
+        """Sem schema de coluna de data, nenhum texto e interpretado."""
+        resultado = self._coagir(("1990-05-17",), self._schema(id="integer"))
+        self.assertEqual(resultado, ("1990-05-17",))
+
+    def test_time_nativo_em_coluna_de_texto_vira_str(self):
+        """``time`` do canonical vira String no ClickHouse (nao Date/Time).
+
+        A origem devolve ``datetime.time`` e o driver chamaria ``.encode``
+        em cima dele: mesma classe de bug do date em coluna de texto.
+        """
+        resultado = self._coagir(
+            (datetime.time(10, 30, 0),), self._schema(hora="time")
+        )
+        self.assertEqual(resultado, ("10:30:00",))
+        self.assertIsInstance(resultado[0], str)
+
+    def test_sem_schema_nao_coage_nada(self):
+        """Sem catalogo nao ha como saber o tipo: o lote vai cru."""
+        resultado = self._coagir(
+            ("1990-05-17",), tabela=None, colunas=["nascimento"]
+        )
+        self.assertEqual(resultado, ("1990-05-17",))
+
+    def test_coluna_de_schema_fora_do_lote_nao_quebra(self):
+        """O catalogo pode trazer coluna que nao veio no SELECT."""
+        tabela = self._schema(nascimento="date", criado="date")
+        resultado = self._coagir(
+            ("1990-05-17",), tabela, colunas=["nascimento"]
+        )
+        self.assertEqual(resultado, (datetime.date(1990, 5, 17),))
+
+    def test_mistura_texto_data_e_numero_no_mesmo_lote(self):
+        """Cada celula cai na coercao da sua coluna, sem interferir nas outras."""
+        tabela = self._schema(
+            id="integer", nome="varchar", nascimento="date", atualizado="timestamp"
+        )
+        resultado = self._coagir(
+            (7, datetime.date(1990, 5, 17), "1990-05-17", "1990-05-17 10:30"),
+            tabela,
+        )
+        self.assertEqual(
+            resultado,
+            (
+                7,  # numero: passa cru
+                "1990-05-17",  # varchar: o date da origem vira texto
+                datetime.date(1990, 5, 17),  # date: o texto vira data
+                datetime.datetime(1990, 5, 17, 10, 30),  # timestamp: vira data+hora
+            ),
+        )
+        self.assertIsInstance(resultado[1], str)
+        self.assertIsInstance(resultado[2], datetime.date)
+        self.assertIsInstance(resultado[3], datetime.datetime)
+
+    def test_string_invalida_reclama_com_a_coluna_e_o_valor(self):
+        """Erro legivel: o TypeError do driver nao diz onde esta o problema."""
+        with self.assertRaises(ValueError) as capturado:
+            self._coagir(("17/05/1990",), self._schema(nascimento="date"))
+        mensagem = str(capturado.exception)
+        self.assertIn("nascimento", mensagem)
+        self.assertIn("17/05/1990", mensagem)
+
+    # ------------------------------------------------------ contrato do DDL
+    def test_os_tipos_de_data_do_template_seguem_o_ddl_do_clickhouse(self):
+        """Fonte unica de verdade: quem e data vem do DDL do conduto.
+
+        Se o ``_TIPOS_POR_SGBD['clickhouse']`` ganhar um tipo de data novo,
+        este teste falha antes de a carga estourar em producao.
+        """
+        from conduto.ddl.ddl_render import _TIPOS_POR_SGBD
+
+        ddl = _TIPOS_POR_SGBD["clickhouse"]
+        modulo = _carregar_modulo_template()
+
+        datetime_no_ddl = {t for t, d in ddl.items() if d.startswith("DateTime")}
+        data_no_ddl = (
+            {t for t, d in ddl.items() if d.startswith("Date")} - datetime_no_ddl
+        )
+
+        self.assertEqual(modulo["_TIPOS_DATA_CLICKHOUSE"], data_no_ddl)
+        self.assertEqual(modulo["_TIPOS_DATETIME_CLICKHOUSE"], datetime_no_ddl)
+
+    # --------------------------------------------------- _texto_para_data
+    def test_texto_para_data_aceita_os_formatos_iso(self):
+        """3.10 e o minimo suportado: nada de fromisoformat permissivo do 3.11+."""
+        modulo = _carregar_modulo_template()
+        converter = modulo["_texto_para_data"]
+        casos = [
+            ("1990-05-17", datetime.date, datetime.date(1990, 5, 17)),
+            ("1990-05-17T10:30:00", datetime.date, datetime.date(1990, 5, 17)),
+            ("1990-05-17 10:30:00", datetime.date, datetime.date(1990, 5, 17)),
+            ("1990-05-17", datetime.datetime, datetime.datetime(1990, 5, 17)),
+            (
+                "1990-05-17T10:30:00",
+                datetime.datetime,
+                datetime.datetime(1990, 5, 17, 10, 30),
+            ),
+            (
+                "1990-05-17 10:30:00",
+                datetime.datetime,
+                datetime.datetime(1990, 5, 17, 10, 30),
+            ),
+        ]
+        for texto, alvo, esperado in casos:
+            with self.subTest(texto=texto, alvo=alvo.__name__):
+                self.assertEqual(
+                    converter(texto, alvo, "coluna", "eventos"), esperado
+                )
+
+    def test_texto_para_data_vira_none_para_branco(self):
+        modulo = _carregar_modulo_template()
+        converter = modulo["_texto_para_data"]
+        for branco in ("", "   ", "\t"):
+            with self.subTest(branco=repr(branco)):
+                self.assertIsNone(converter(branco, datetime.date, "c", "t"))
+
+    def test_texto_para_data_reclama_com_coluna_e_valor(self):
+        modulo = _carregar_modulo_template()
+        converter = modulo["_texto_para_data"]
+        with self.assertRaises(ValueError) as capturado:
+            converter("ontem", datetime.date, "nascimento", "eventos")
+        self.assertIn("eventos.nascimento", str(capturado.exception))
+        self.assertIn("ontem", str(capturado.exception))
 
 
 # ==========================================================================
