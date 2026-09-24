@@ -244,6 +244,14 @@ CATALOGO_EN: dict[str, str] = {
     "Etapa aguardando as anteriores.": "Step waiting on the previous ones.",
     "Etapa não executada neste fluxo.": "Step not run in this flow.",
     "Etapa concluída sem perguntas.": "Step finished without questions.",
+    "Etapa em andamento.": "Step in progress.",
+    # --- Registros do shell (F3): vão para o SQLite, não para a área de conteúdo ---
+    "Registros": "Logs",
+    "F3 abre os registros ({arquivo}).": "F3 opens the logs ({arquivo}).",
+    "Registros · {arquivo}": "Logs · {arquivo}",
+    "Nenhum registro nesta sessão.": "No logs in this session.",
+    "F3 ou esc volta para a etapa.": "F3 or esc goes back to the step.",
+    "etapa: {chave}": "step: {chave}",
     # Títulos dos passos do menu lateral (Passo.titulo, traduzidos no desenho)
     "Origem: SGBD": "Source: DBMS",
     "Origem: credenciais": "Source: credentials",
