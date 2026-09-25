@@ -2,6 +2,8 @@
 
 > **O duto que leva seus dados da origem ao destino.**
 
+🇺🇸 [English](https://github.com/joaopedrozg/conduto/blob/main/README.en.md) · 🇧🇷 **Português (BR)**
+
 [![PyPI](https://img.shields.io/pypi/v/conduto?label=pypi)](https://pypi.org/project/conduto/)
 ![Python](https://img.shields.io/pypi/pyversions/conduto)
 ![Licença](https://img.shields.io/pypi/l/conduto)
@@ -469,9 +471,12 @@ Versões suportadas: 18 (padrão) e 17 (`-Version 17`). Documentação oficial: 
 
 ## Desenvolvimento
 
+> Este README existe também em inglês, em [`README.en.md`](https://github.com/joaopedrozg/conduto/blob/main/README.en.md). Ao editar um, atualize o outro — o PyPI mostra este arquivo (`readme = "README.md"` no `pyproject.toml`) e a CI falha se os dois saírem de sincronia.
+
 ```bash
 uv sync --all-extras   # projeto + drivers de todos os SGBD + dev (pytest)
 uv run pytest -q       # testes
+uv run python scripts/check_readme_sync.py   # confere os dois READMEs
 uv build               # empacota
 ```
 
