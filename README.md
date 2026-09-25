@@ -2,7 +2,7 @@
 
 > **O duto que leva seus dados da origem ao destino.**
 
-🇺🇸 [English](https://github.com/joaopedrozg/conduto/blob/main/README.en.md) · 🇧🇷 **Português (BR)**
+🇺🇸 [English](README.en.md) · 🇧🇷 **Português (BR)**
 
 [![PyPI](https://img.shields.io/pypi/v/conduto?label=pypi)](https://pypi.org/project/conduto/)
 ![Python](https://img.shields.io/pypi/pyversions/conduto)
@@ -471,7 +471,7 @@ Versões suportadas: 18 (padrão) e 17 (`-Version 17`). Documentação oficial: 
 
 ## Desenvolvimento
 
-> Este README existe também em inglês, em [`README.en.md`](https://github.com/joaopedrozg/conduto/blob/main/README.en.md). Ao editar um, atualize o outro — o PyPI mostra este arquivo (`readme = "README.md"` no `pyproject.toml`) e a CI falha se os dois saírem de sincronia.
+> Este README existe também em inglês, em [`README.en.md`](README.en.md). Ao editar um, atualize o outro — a CI falha se os dois saírem de sincronia. O link é relativo de propósito: no GitHub ele troca na página, sem pular para outra branch. O PyPI, que renderiza um arquivo só, mostra a versão em inglês (`readme = "README.en.md"` no `pyproject.toml`).
 
 ```bash
 uv sync --all-extras   # projeto + drivers de todos os SGBD + dev (pytest)

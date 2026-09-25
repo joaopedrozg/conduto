@@ -12,7 +12,9 @@ fluir em ritmo diferente da revisão:
 2. a estrutura de headings é idêntica (mesma sequência de níveis);
 3. o número de blocos de código é o mesmo;
 4. todo link de sumário (#âncora) aponta para um heading existente;
-5. o seletor de idioma do topo aponta para o arquivo do outro idioma.
+5. o seletor de idioma do topo aponta para o arquivo do outro idioma;
+6. o ``readme`` do ``pyproject.toml`` aponta para um dos dois (quebra o
+   build se o arquivo sumir).
 """
 
 from __future__ import annotations
@@ -81,6 +83,15 @@ def ancora_valida(texto: str) -> list[str]:
     return invalidos
 
 
+def arquivo_readme_pyproject(texto: str) -> str | None:
+    """O arquivo apontado por ``readme`` no pyproject (string ou tabela)."""
+    linha = re.search(r"(?m)^readme\s*=\s*(.+)$", texto)
+    if not linha:
+        return None
+    nome = re.search(r'"([^"]+)"', linha.group(1))
+    return nome.group(1) if nome else None
+
+
 def conferir() -> list[str]:
     problemas: list[str] = []
 
@@ -122,6 +133,18 @@ def conferir() -> list[str]:
         if destino not in texto[:1000]:
             problemas.append(f"{nome}: seletor de idioma não aponta para {destino} no topo do arquivo")
 
+    # 5. o pyproject aponta para um dos dois (quebra o build se o arquivo sumir)
+    pyproject = RAIZ / "pyproject.toml"
+    if pyproject.exists():
+        declarado = arquivo_readme_pyproject(pyproject.read_text(encoding="utf-8"))
+        if declarado not in (PT.name, EN.name):
+            problemas.append(
+                f"pyproject.toml: 'readme' aponta para {declarado!r}, "
+                f"esperado {PT.name} ou {EN.name}"
+            )
+    else:
+        problemas.append("pyproject.toml ausente")
+
     return problemas
 
 
@@ -133,7 +156,7 @@ def main() -> int:
             print(f"  - {problema}")
         print("\nAtualize os dois arquivos e rode de novo: uv run python scripts/check_readme_sync.py")
         return 1
-    print("README.md e README.en.md em sincronia (headings, blocos, âncoras e seletor).")
+    print("README.md e README.en.md em sincronia (headings, blocos, âncoras, seletor e pyproject).")
     return 0
 
 
