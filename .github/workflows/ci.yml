@@ -26,6 +26,9 @@ jobs:
       - name: Smoke test CLI
         run: uv run conduto --help
 
+      - name: Check README sync
+        run: uv run python scripts/check_readme_sync.py
+
       - name: Run tests
         run: uv run pytest -q
 

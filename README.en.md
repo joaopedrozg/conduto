@@ -477,11 +477,12 @@ Supported versions: 18 (default) and 17 (`-Version 17`). Official documentation:
 
 ## Development
 
-> This README also exists in Portuguese, in [`README.md`](https://github.com/joaopedrozg/conduto/blob/main/README.md). When you edit one, update the other — PyPI renders that file (`readme = "README.md"` in `pyproject.toml`), so it shows the Portuguese version.
+> This README also exists in Portuguese, in [`README.md`](https://github.com/joaopedrozg/conduto/blob/main/README.md). When you edit one, update the other — PyPI renders that file (`readme = "README.md"` in `pyproject.toml`), so it shows the Portuguese version, and CI fails if the two drift apart.
 
 ```bash
 uv sync --all-extras   # project + drivers for every database + dev (pytest)
 uv run pytest -q       # tests
+uv run python scripts/check_readme_sync.py   # checks both READMEs
 uv build               # package it
 ```
 

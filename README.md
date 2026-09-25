@@ -471,11 +471,12 @@ Versões suportadas: 18 (padrão) e 17 (`-Version 17`). Documentação oficial: 
 
 ## Desenvolvimento
 
-> Este README existe também em inglês, em [`README.en.md`](https://github.com/joaopedrozg/conduto/blob/main/README.en.md). Ao editar um, atualize o outro — o PyPI mostra este arquivo (`readme = "README.md"` no `pyproject.toml`).
+> Este README existe também em inglês, em [`README.en.md`](https://github.com/joaopedrozg/conduto/blob/main/README.en.md). Ao editar um, atualize o outro — o PyPI mostra este arquivo (`readme = "README.md"` no `pyproject.toml`) e a CI falha se os dois saírem de sincronia.
 
 ```bash
 uv sync --all-extras   # projeto + drivers de todos os SGBD + dev (pytest)
 uv run pytest -q       # testes
+uv run python scripts/check_readme_sync.py   # confere os dois READMEs
 uv build               # empacota
 ```
 
