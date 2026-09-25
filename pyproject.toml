@@ -1,6 +1,6 @@
 [project]
 name = "conduto"
-version = "0.1.28"
+version = "1.1.42"
 description = "CLI to scaffold data migration/ELT projects with YAML schemas and a uv-managed environment."
 # PyPI mostra o README em ingles; o GitHub usa o README.md (pt-BR).
 # Os dois sao mantidos em sincronia por scripts/check_readme_sync.py.
